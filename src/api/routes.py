@@ -1,19 +1,39 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, status, Depends
-from pydantic import BaseModel
 from typing import Optional
 
-from src.auth.security import get_password_hash, verify_password, create_access_token, verify_token
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from pydantic import BaseModel
+
+from src.auth.security import (
+    create_access_token,
+    get_password_hash,
+    verify_password,
+    verify_token,
+)
 from src.services.room_manager import room_manager
 
 router = APIRouter()
+
 
 class RoomJoinRequest(BaseModel):
     room_id: str
     password: str
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+@router.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 
 @router.post("/api/join", response_model=Token)
@@ -35,17 +55,19 @@ async def join_room(request: RoomJoinRequest):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect password for this room",
             )
-    
+
     access_token = create_access_token(data={"sub": room_id})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.websocket("/ws/{room_id}")
-async def websocket_endpoint(websocket: WebSocket, room_id: str, token: Optional[str] = None):
+async def websocket_endpoint(
+    websocket: WebSocket, room_id: str, token: Optional[str] = None
+):
     if not token:
         await websocket.close(code=1008, reason="Missing authentication token")
         return
-    
+
     token_room_id = verify_token(token)
     if token_room_id != room_id:
         await websocket.close(code=1008, reason="Invalid or expired token")
@@ -53,9 +75,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: Optional
 
     room = room_manager.get_room(room_id)
     if not room:
-        await websocket.close(code=1008, reason="Room does not exist. Please login again.")
+        await websocket.close(
+            code=1008, reason="Room does not exist. Please login again."
+        )
         return
-    
+
     if len(room.connections) >= 2:
         await websocket.close(code=1008, reason="Room full")
         return
