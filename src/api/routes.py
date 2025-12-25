@@ -92,3 +92,4 @@ async def websocket_endpoint(
                 await room_manager.broadcast(data, room_id, websocket)
     except WebSocketDisconnect:
         print(f"User left room {room_id}")
+        await room_manager.broadcast('{"type": "user-left"}', room_id, websocket)

@@ -279,7 +279,43 @@ async function handleSignalMessage(msg) {
                 remoteMuteIndicator.classList.remove('hidden');
             }
             break;
+
+        case 'user-left':
+            handleUserLeft();
+            break;
     }
+}
+
+function handleUserLeft() {
+    console.log("Remote user left.");
+    showToast("Remote user has left the room.");
+
+    // Close Peer Connection
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+
+    // Reset Remote Stream
+    remoteStream = null;
+    
+    // Revert UI to Waiting State
+    switchToWaitingView();
+}
+
+function switchToWaitingView() {
+    // 1. Move Local back to Main
+    mainVideo.srcObject = localStream;
+    mainVideo.muted = true; 
+    mainVideo.classList.add('mirror');
+
+    // 2. Hide PIP and Remote Labels
+    localVideoContainer.classList.add('hidden');
+    remoteLabelContainer.classList.add('hidden');
+    
+    // 3. Reset Indicators
+    remoteMuteIndicator.classList.add('hidden');
+    remoteLabel.innerText = "Remote";
 }
 
 async function processIceQueue() {
