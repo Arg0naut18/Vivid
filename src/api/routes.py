@@ -1,5 +1,6 @@
 from typing import Optional
 
+import httpx
 from fastapi import (
     APIRouter,
     Depends,
@@ -16,9 +17,53 @@ from src.auth.security import (
     verify_password,
     verify_token,
 )
+from src.core.config import settings
 from src.services.room_manager import room_manager
 
 router = APIRouter()
+
+
+@router.get("/api/ice-config")
+async def get_ice_config():
+    """Returns the ICE servers configuration (STUN/TURN)"""
+    # 1. Check if Metered.ca is configured
+    if settings.TURN_API_KEY and settings.TURN_URL:
+        try:
+            async with httpx.AsyncClient() as client:
+                url = f"{settings.TURN_URL}?apiKey={settings.TURN_API_KEY}"
+                response = await client.get(url, timeout=5.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    # Metered might return a list of servers, or an object with iceServers
+                    if isinstance(data, list):
+                        return {"iceServers": data}
+                    return data
+                else:
+                    pass
+        except Exception as e:
+            pass
+    else:
+        # User might be using only static config or default STUN
+        pass
+
+    # 2. Fallback to manually configured TURN or just Google STUN
+    ice_servers = [
+        {"urls": "stun:stun1.l.google.com:19302"},
+        {"urls": "stun:stun2.l.google.com:19302"},
+    ]
+
+    # Only add TURN_URL as a static server if it's NOT the HTTP API endpoint
+    if settings.TURN_URL and not settings.TURN_URL.startswith("http"):
+        server = {
+            "urls": settings.TURN_URL,
+        }
+        if settings.TURN_USERNAME:
+            server["username"] = settings.TURN_USERNAME
+        if settings.TURN_PASSWORD:
+            server["credential"] = settings.TURN_PASSWORD
+        ice_servers.append(server)
+
+    return {"iceServers": ice_servers}
 
 
 class RoomJoinRequest(BaseModel):
@@ -86,10 +131,8 @@ async def websocket_endpoint(
 
     try:
         async with room_manager.connect(websocket, room_id):
-            print(f"User joined room {room_id}. Total: {len(room.connections)}")
             while True:
                 data = await websocket.receive_text()
                 await room_manager.broadcast(data, room_id, websocket)
     except WebSocketDisconnect:
-        print(f"User left room {room_id}")
         await room_manager.broadcast('{"type": "user-left"}', room_id, websocket)

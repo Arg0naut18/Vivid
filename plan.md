@@ -71,8 +71,29 @@ The frontend handles all media capture, P2P connection logic, and UI state.
     *   Creates `Answer` -> Sends to Server -> Relayed to Host.
 6.  **P2P Established**: Media flows directly between browsers.
 
-### 3.3 Media
+### 3.3 User Disconnection
+*   **Detection**: Backend detects `WebSocketDisconnect`.
+*   **Broadcast**: Server sends `{"type": "user-left"}` to the remaining peer.
+*   **Frontend Action**:
+    *   Closes the `RTCPeerConnection`.
+    *   Resets UI to "Waiting" state (Single view, muted local video).
+    *   Displays a Toast notification.
+
+### 3.4 Cross-Network Connectivity (TURN)
+*   **Issue**: P2P fails on different networks due to NAT (Network Address Translation).
+*   **Solution**: Dynamic TURN configuration.
+*   **Implementation**:
+    *   **Backend**: `GET /api/ice-config` endpoint.
+    *   **Config**: Uses `TURN_API_KEY` or `TURN_URL` env vars.
+    *   **Frontend**: Fetches config before call starts.
+    *   **Metered.ca Integration**: Securely proxies API key on backend to fetch fresh credentials.
+
+### 3.5 Media
 *   **Normal**: `navigator.mediaDevices.getUserMedia` -> PeerConnection.
+*   **Rendering**: 
+    *   Remote tracks are handled in `ontrack`.
+    *   **Robustness**: Explicitly handles cases where tracks arrive without a stream wrapper by creating a local `MediaStream`.
+    *   **Auto-Play**: Enforced `play()` call on track receipt to prevent "frozen" or empty video elements.
 *   **Screen Share**: 
     *   `getDisplayMedia` (Video + System Audio).
     *   `AudioContext` mixes Mic + System Audio.
@@ -101,3 +122,9 @@ The frontend handles all media capture, P2P connection logic, and UI state.
 *   **Turn Server**: Currently relies on public STUN servers. Corporate/Mobile networks might block P2P. A TURN server (e.g., Coturn) is needed for 100% reliability.
 *   **Persistence**: Room passwords are lost on server restart (In-Memory DB).
 *   **iOS Screen Share**: Mobile browsers generally restrict screen sharing *from* the device.
+
+## 7. Change Log (Recent Updates)
+*   **User Disconnection**: Implemented `user-left` signal. Frontend now correctly resets the UI and notifies the user when a peer leaves.
+*   **Video Reliability**: Fixed "Empty Remote Video" bug. The `ontrack` handler now robustly creates streams if missing and forces the video element to play.
+*   **Cross-Network Support**: Added `GET /api/ice-config` endpoint. Implemented dynamic fetching of TURN credentials (Metered.ca or manual) to fix NAT traversal issues on different networks.
+*   **Code Cleanup**: Removed verbose debug logging and simplified connection logic.

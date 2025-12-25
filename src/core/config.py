@@ -8,5 +8,14 @@ class Settings:
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
+    # Optional TURN Server Config (for cross-network P2P)
+    TURN_URL: str = os.getenv("TURN_URL", "")
+    TURN_API_KEY: str = os.getenv("TURN_API_KEY", "")
+
+    # Optional Metered.ca Config (Dynamic TURN)
+    # URL should be: https://vivid.metered.live/api/v1/turn/credentials
+    TURN_USERNAME: str = os.getenv("TURN_USERNAME", "")
+    TURN_PASSWORD: str = os.getenv("TURN_PASSWORD", "")
+
 
 settings = Settings()
