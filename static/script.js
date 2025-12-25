@@ -4,6 +4,7 @@ let peerConnection;
 let socket;
 let roomId;
 let authToken;
+let userName = "Guest";
 let isScreenSharing = false;
 
 // Screen Share State
@@ -16,8 +17,11 @@ let audioDestination;
 let micSource;
 let screenAudioSource;
 
-// ICE Queue
+// ICE Queue & State
 let iceCandidatesQueue = [];
+let isPolite = false;
+let makingOffer = false;
+let ignoreOffer = false;
 
 // ICE Servers (STUN)
 const rtcConfig = {
@@ -33,12 +37,16 @@ const videoScreen = document.getElementById('video-screen');
 const joinBtn = document.getElementById('join-btn');
 const roomIdInput = document.getElementById('room-id');
 const roomPasswordInput = document.getElementById('room-password');
+const userNameInput = document.getElementById('user-name');
 const roomIdDisplay = document.getElementById('room-id-display');
 const roomInfo = document.getElementById('room-info');
+const toastContainer = document.getElementById('toast-container');
 
-const localVideo = document.getElementById('local-video');
-const remoteVideo = document.getElementById('remote-video');
-const remoteVideoOverlay = document.getElementById('remote-video-overlay');
+// Video Elements
+// main-video is the Big background video (Remote usually, or Local if waiting)
+const mainVideo = document.getElementById('main-video'); 
+const localVideo = document.getElementById('local-video'); // The PIP local video
+const remoteVideoOverlay = document.getElementById('remote-video-overlay'); // The PIP remote video (when sharing)
 
 const localVideoContainer = document.getElementById('local-video-container');
 const remoteOverlayContainer = document.getElementById('remote-overlay-container');
@@ -46,6 +54,10 @@ const screenSharePlaceholder = document.getElementById('screen-share-placeholder
 
 const localMuteIndicator = document.getElementById('local-mute-indicator');
 const remoteMuteIndicator = document.getElementById('remote-mute-indicator');
+
+const localLabel = document.getElementById('local-label');
+const remoteLabel = document.getElementById('remote-label');
+const remoteLabelContainer = document.getElementById('remote-label-container');
 
 // Buttons & Icons
 const shareScreenBtn = document.getElementById('share-screen');
@@ -64,6 +76,10 @@ const iconVideoOff = document.getElementById('icon-video-off');
 joinBtn.onclick = async () => {
     roomId = roomIdInput.value.trim();
     const password = roomPasswordInput.value.trim();
+    const name = userNameInput.value.trim();
+    
+    if (name) userName = name;
+    else userName = "User-" + Math.floor(Math.random() * 1000);
 
     if (!roomId || !password) {
         alert("Please enter both Room ID and Password");
@@ -92,6 +108,7 @@ joinBtn.onclick = async () => {
         videoScreen.classList.remove('hidden');
         roomInfo.classList.remove('hidden');
         roomIdDisplay.innerText = roomId;
+        localLabel.innerText = userName + " (You)";
 
         await startCall();
 
@@ -112,66 +129,20 @@ toggleVideoBtn.onclick = toggleVideo;
 setupDraggable(localVideoContainer);
 setupDraggable(remoteOverlayContainer);
 
-// --- Media Control Logic ---
-
-function toggleMic() {
-    if (localStream) {
-        const audioTrack = localStream.getAudioTracks()[0];
-        if (audioTrack) {
-            audioTrack.enabled = !audioTrack.enabled;
-            const isEnabled = audioTrack.enabled;
-
-            // Update UI
-            if (isEnabled) {
-                toggleMicBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
-                toggleMicBtn.classList.add('bg-gray-700', 'hover:bg-gray-600');
-                iconMicOn.classList.remove('hidden');
-                iconMicOff.classList.add('hidden');
-                localMuteIndicator.classList.add('hidden');
-            } else {
-                toggleMicBtn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
-                toggleMicBtn.classList.add('bg-red-600', 'hover:bg-red-700');
-                iconMicOn.classList.add('hidden');
-                iconMicOff.classList.remove('hidden');
-                localMuteIndicator.classList.remove('hidden');
-            }
-
-            // Signal to peer
-            sendSignal({ type: 'mic-status', enabled: isEnabled });
-        }
-    }
-}
-
-function toggleVideo() {
-    if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-            videoTrack.enabled = !videoTrack.enabled;
-            // Update UI
-            if (videoTrack.enabled) {
-                toggleVideoBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
-                toggleVideoBtn.classList.add('bg-gray-700', 'hover:bg-gray-600');
-                iconVideoOn.classList.remove('hidden');
-                iconVideoOff.classList.add('hidden');
-            } else {
-                toggleVideoBtn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
-                toggleVideoBtn.classList.add('bg-red-600', 'hover:bg-red-700');
-                iconVideoOn.classList.add('hidden');
-                iconVideoOff.classList.remove('hidden');
-            }
-        }
-    }
-}
-
 // --- WebRTC Logic ---
 
 async function startCall() {
     try {
-        // 1. Get Local User Media
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
+        
+        // Initial View: Local Video is Main (Waiting state)
+        mainVideo.srcObject = localStream;
+        mainVideo.muted = true; // Mute self
+        mainVideo.classList.add('mirror'); // Mirror self view
+        
+        // Hide small PIP initially since it's redundant
+        localVideoContainer.classList.add('hidden'); 
 
-        // 2. Connect to Signaling Server
         connectSocket();
 
     } catch (err) {
@@ -186,7 +157,8 @@ function connectSocket() {
 
     socket.onopen = () => {
         console.log('Connected to signaling server');
-        sendSignal({ type: 'announce' });
+        isPolite = true; // Newer user is polite
+        sendSignal({ type: 'announce', name: userName });
     };
 
     socket.onmessage = async (event) => {
@@ -208,7 +180,6 @@ function connectSocket() {
 async function createPeerConnection() {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
-    // Add local tracks
     localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
     });
@@ -216,9 +187,14 @@ async function createPeerConnection() {
     peerConnection.ontrack = (event) => {
         console.log("Remote track received", event.streams[0]);
         remoteStream = event.streams[0];
-        updateRemoteVideoSource();
-        // Force play
-        remoteVideo.play().catch(e => console.error("Remote video auto-play failed:", e));
+        
+        // Peer Connected! Switch Views
+        switchToConnectedView();
+        
+        // Wait for video to be ready
+        mainVideo.onloadedmetadata = () => {
+             mainVideo.play().catch(e => console.error("Remote video auto-play failed:", e));
+        };
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -233,6 +209,31 @@ async function createPeerConnection() {
             peerConnection.restartIce();
         }
     };
+    
+    // Perfect Negotiation Logic
+    peerConnection.onnegotiationneeded = async () => {
+        try {
+            makingOffer = true;
+            await peerConnection.setLocalDescription();
+            sendSignal({ type: 'offer', sdp: peerConnection.localDescription });
+        } catch (err) {
+            console.error(err);
+        } finally {
+            makingOffer = false;
+        }
+    };
+}
+
+function switchToConnectedView() {
+    // 1. Main Video becomes Remote
+    mainVideo.srcObject = remoteStream;
+    mainVideo.muted = false; // Unmute remote
+    mainVideo.classList.remove('mirror'); // Don't mirror remote
+    remoteLabelContainer.classList.remove('hidden');
+
+    // 2. Local Video goes to PIP
+    localVideo.srcObject = localStream;
+    localVideoContainer.classList.remove('hidden');
 }
 
 async function handleSignalMessage(msg) {
@@ -240,7 +241,12 @@ async function handleSignalMessage(msg) {
 
     switch (msg.type) {
         case 'announce':
-            console.log("Received announce, creating offer...");
+            isPolite = false; // Existing user is impolite
+            console.log(`User ${msg.name} joined.`);
+            showToast(`${msg.name} has joined the session!`);
+            remoteLabel.innerText = msg.name || "Remote";
+            
+            // Trigger offer
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             sendSignal({ type: 'offer', sdp: offer });
@@ -248,8 +254,16 @@ async function handleSignalMessage(msg) {
 
         case 'offer':
             console.log("Received offer");
+            // Glare handling (Perfect Negotiation)
+            const offerCollision = makingOffer || peerConnection.signalingState !== "stable";
+            ignoreOffer = !isPolite && offerCollision;
+            if (ignoreOffer) {
+                console.log("Ignoring colliding offer");
+                return;
+            }
+
             await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-            processIceQueue(); // Process queued candidates
+            processIceQueue();
             
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
@@ -259,7 +273,7 @@ async function handleSignalMessage(msg) {
         case 'answer':
             console.log("Received answer");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-            processIceQueue(); // Process queued candidates
+            processIceQueue();
             break;
 
         case 'ice-candidate':
@@ -270,13 +284,11 @@ async function handleSignalMessage(msg) {
                     console.error("Error adding ice candidate", e);
                 }
             } else {
-                console.log("Queueing ICE candidate (Remote description not set yet)");
                 iceCandidatesQueue.push(msg.candidate);
             }
             break;
             
         case 'mic-status':
-            console.log("Received mic status:", msg.enabled);
             if (msg.enabled) {
                 remoteMuteIndicator.classList.add('hidden');
             } else {
@@ -291,9 +303,8 @@ async function processIceQueue() {
         const candidate = iceCandidatesQueue.shift();
         try {
             await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-            console.log("Processed queued ICE candidate");
         } catch (e) {
-            console.error("Error adding queued ice candidate", e);
+            console.error("Error processing queued candidate", e);
         }
     }
 }
@@ -304,30 +315,87 @@ function sendSignal(data) {
     }
 }
 
-// --- Screen Sharing & Audio Mixing ---
+// --- UX Helpers ---
+
+function showToast(message) {
+    const toast = document.createElement('div');
+    toast.className = 'bg-blue-600 text-white px-4 py-2 rounded shadow-lg transition-opacity duration-500 opacity-0';
+    toast.innerText = message;
+    toastContainer.appendChild(toast);
+    
+    // Fade in
+    requestAnimationFrame(() => toast.classList.remove('opacity-0'));
+
+    // Remove after 3s
+    setTimeout(() => {
+        toast.classList.add('opacity-0');
+        setTimeout(() => toast.remove(), 500);
+    }, 3000);
+}
+
+
+// --- Media Control Logic (Mic/Video Toggles) --- 
+// (Same as before, simplified for brevity in this overwrite)
+
+function toggleMic() {
+    if (localStream) {
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            const isEnabled = audioTrack.enabled;
+
+            if (isEnabled) {
+                toggleMicBtn.classList.replace('bg-red-600', 'bg-gray-700');
+                toggleMicBtn.classList.replace('hover:bg-red-700', 'hover:bg-gray-600');
+                iconMicOn.classList.remove('hidden');
+                iconMicOff.classList.add('hidden');
+                localMuteIndicator.classList.add('hidden');
+            } else {
+                toggleMicBtn.classList.replace('bg-gray-700', 'bg-red-600');
+                toggleMicBtn.classList.replace('hover:bg-gray-600', 'hover:bg-red-700');
+                iconMicOn.classList.add('hidden');
+                iconMicOff.classList.remove('hidden');
+                localMuteIndicator.classList.remove('hidden');
+            }
+            sendSignal({ type: 'mic-status', enabled: isEnabled });
+        }
+    }
+}
+
+function toggleVideo() {
+    if (localStream) {
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.enabled = !videoTrack.enabled;
+            if (videoTrack.enabled) {
+                toggleVideoBtn.classList.replace('bg-red-600', 'bg-gray-700');
+                toggleVideoBtn.classList.replace('hover:bg-red-700', 'hover:bg-gray-600');
+                iconVideoOn.classList.remove('hidden');
+                iconVideoOff.classList.add('hidden');
+            } else {
+                toggleVideoBtn.classList.replace('bg-gray-700', 'bg-red-600');
+                toggleVideoBtn.classList.replace('hover:bg-gray-600', 'hover:bg-red-700');
+                iconVideoOn.classList.add('hidden');
+                iconVideoOff.classList.remove('hidden');
+            }
+        }
+    }
+}
+
+// --- Screen Sharing ---
+// (Mostly same logic, ensuring UI updates point to 'mainVideo' or 'remoteVideoOverlay')
 
 async function startScreenShare() {
     try {
-        currentScreenStream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: true, 
-            audio: true 
-        });
+        currentScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
         const screenAudioTrack = currentScreenStream.getAudioTracks()[0];
         
-        // --- Audio Mixing ---
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
         audioDestination = audioContext.createMediaStreamDestination();
         
-        if (!micSource && localStream.getAudioTracks().length > 0) {
-            micSource = audioContext.createMediaStreamSource(localStream);
-        }
-        if (micSource) {
-            micSource.connect(audioDestination);
-        }
+        if (!micSource && localStream.getAudioTracks().length > 0) micSource = audioContext.createMediaStreamSource(localStream);
+        if (micSource) micSource.connect(audioDestination);
 
         if (screenAudioTrack) {
             if (screenAudioSource) screenAudioSource.disconnect();
@@ -337,30 +405,17 @@ async function startScreenShare() {
 
         const mixedAudioTrack = audioDestination.stream.getAudioTracks()[0];
 
-        // --- Replace Tracks in PeerConnection ---
         if (peerConnection) {
             const videoSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (videoSender) {
-                await videoSender.replaceTrack(currentScreenVideoTrack);
-            }
-
+            if (videoSender) await videoSender.replaceTrack(currentScreenVideoTrack);
             const audioSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
-            if (audioSender && mixedAudioTrack) {
-                await audioSender.replaceTrack(mixedAudioTrack);
-            }
+            if (audioSender) await audioSender.replaceTrack(mixedAudioTrack);
         }
 
         updateUIForScreenShare(true);
-
-        currentScreenVideoTrack.onended = () => {
-            stopScreenShare();
-        };
-
+        currentScreenVideoTrack.onended = () => stopScreenShare();
         isScreenSharing = true;
-
-    } catch (err) {
-        console.error("Error starting screen share:", err);
-    }
+    } catch (err) { console.error(err); }
 }
 
 async function stopScreenShare() {
@@ -369,42 +424,36 @@ async function stopScreenShare() {
     if (peerConnection) {
         const videoSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
         const localVideoTrack = localStream.getVideoTracks()[0];
-        if (videoSender && localVideoTrack) {
-            await videoSender.replaceTrack(localVideoTrack);
-        }
-
+        if (videoSender) await videoSender.replaceTrack(localVideoTrack);
         const audioSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
         const localAudioTrack = localStream.getAudioTracks()[0];
-        if (audioSender && localAudioTrack) {
-            await audioSender.replaceTrack(localAudioTrack);
-        }
+        if (audioSender) await audioSender.replaceTrack(localAudioTrack);
     }
-
-    if (screenAudioSource) screenAudioSource.disconnect();
     
+    if (screenAudioSource) screenAudioSource.disconnect();
     if (currentScreenStream) {
         currentScreenStream.getTracks().forEach(track => track.stop());
         currentScreenStream = null;
     }
     
     updateUIForScreenShare(false);
-
-    if (document.pictureInPictureElement) {
-        document.exitPictureInPicture().catch(console.error);
-    }
-
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(console.error);
     isScreenSharing = false;
 }
 
 function updateUIForScreenShare(isSharing) {
     if (isSharing) {
-        remoteVideo.style.display = 'none';
+        mainVideo.style.display = 'none'; 
+        // Prevent double audio: Mute main, play from overlay
+        mainVideo.muted = true;
+        
         screenSharePlaceholder.style.display = 'flex';
         screenSharePlaceholder.classList.remove('hidden');
 
         remoteOverlayContainer.classList.remove('hidden');
         if (remoteStream) {
             remoteVideoOverlay.srcObject = remoteStream;
+            remoteVideoOverlay.muted = false; // Ensure audio plays from overlay
             
             if (document.pictureInPictureEnabled && remoteVideoOverlay.requestPictureInPicture) {
                 if (remoteVideoOverlay.readyState >= 1) {
@@ -425,16 +474,24 @@ function updateUIForScreenShare(isSharing) {
         stopShareBtn.classList.remove('hidden');
 
     } else {
-        remoteVideo.style.display = 'block';
+        mainVideo.style.display = 'block';
+        
+        // Restore Audio logic: Unmute main ONLY if it's remote stream
+        if (remoteStream && mainVideo.srcObject === remoteStream) {
+            mainVideo.muted = false;
+        } else {
+            // It's local stream (waiting) or null, keep muted
+            mainVideo.muted = true;
+        }
+        
         screenSharePlaceholder.style.display = 'none';
         screenSharePlaceholder.classList.add('hidden');
 
         remoteOverlayContainer.classList.add('hidden');
         remoteVideoOverlay.srcObject = null;
+        remoteVideoOverlay.muted = true; // Mute overlay
         
-        if (remoteStream) {
-            remoteVideo.srcObject = remoteStream;
-        }
+        if (remoteStream) mainVideo.srcObject = remoteStream; 
 
         shareScreenBtn.classList.replace('bg-green-600', 'bg-blue-600');
         shareScreenBtn.classList.replace('hover:bg-green-700', 'hover:bg-blue-700');
@@ -444,22 +501,12 @@ function updateUIForScreenShare(isSharing) {
     }
 }
 
-function updateRemoteVideoSource() {
-    if (isScreenSharing) {
-        remoteVideoOverlay.srcObject = remoteStream;
-        remoteVideo.srcObject = remoteStream; 
-    } else {
-        remoteVideo.srcObject = remoteStream;
-        remoteVideoOverlay.srcObject = null;
-    }
-}
-
-// --- Draggable Utilities ---
-
+// Draggable Utils
 function setupDraggable(element) {
     let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-    
+
     element.onmousedown = dragMouseDown;
+    element.ontouchstart = dragTouchStart;
 
     function dragMouseDown(e) {
         e.preventDefault();
@@ -469,20 +516,45 @@ function setupDraggable(element) {
         document.onmousemove = elementDrag;
     }
 
+    function dragTouchStart(e) {
+        // e.preventDefault(); // Optional: might block click? usually fine for dragging.
+        const touch = e.touches[0];
+        pos3 = touch.clientX;
+        pos4 = touch.clientY;
+        document.ontouchend = closeDragElement;
+        document.ontouchmove = elementTouchDrag;
+    }
+
     function elementDrag(e) {
         e.preventDefault();
         pos1 = pos3 - e.clientX;
         pos2 = pos4 - e.clientY;
         pos3 = e.clientX;
         pos4 = e.clientY;
+        updatePosition();
+    }
+
+    function elementTouchDrag(e) {
+        // e.preventDefault(); // Stop scrolling
+        const touch = e.touches[0];
+        pos1 = pos3 - touch.clientX;
+        pos2 = pos4 - touch.clientY;
+        pos3 = touch.clientX;
+        pos4 = touch.clientY;
+        updatePosition();
+    }
+
+    function updatePosition() {
         element.style.top = (element.offsetTop - pos2) + "px";
         element.style.left = (element.offsetLeft - pos1) + "px";
-        element.style.bottom = 'auto';
+        element.style.bottom = 'auto'; 
         element.style.right = 'auto';
     }
 
     function closeDragElement() {
         document.onmouseup = null;
         document.onmousemove = null;
+        document.ontouchend = null;
+        document.ontouchmove = null;
     }
 }

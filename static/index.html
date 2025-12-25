@@ -17,12 +17,16 @@
 
     <main class="flex-1 relative flex items-center justify-center overflow-hidden">
         <!-- Join Screen -->
-        <div id="join-screen" class="bg-gray-800 p-8 rounded-lg shadow-xl w-96">
+        <div id="join-screen" class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md mx-4 z-50">
             <h2 class="text-xl mb-4">Join a Session</h2>
+            <input type="text" id="user-name" placeholder="Enter Your Name (Optional)" class="w-full p-2 mb-4 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:border-blue-500">
             <input type="text" id="room-id" placeholder="Enter Room ID" class="w-full p-2 mb-4 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:border-blue-500">
             <input type="password" id="room-password" placeholder="Room Password" class="w-full p-2 mb-4 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:border-blue-500">
             <button id="join-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded transition">Join</button>
         </div>
+
+        <!-- Toast Container -->
+        <div id="toast-container" class="absolute top-20 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
         <!-- Video Screen -->
         <div id="video-screen" class="hidden w-full h-full flex flex-col">
@@ -42,14 +46,20 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3l18 18" />
                     </svg>
                 </div>
-
-                <!-- Main Video (Remote or Screen) -->
-                <video id="remote-video" autoplay playsinline class="w-full h-full object-contain"></video>
                 
-                <!-- Local Video Overlay (Draggable) -->
-                <div id="local-video-container" class="absolute bottom-4 right-4 w-48 h-36 bg-gray-800 rounded-lg overflow-hidden border-2 border-blue-500 shadow-2xl cursor-move z-10">
+                <!-- Remote Label (Main View) -->
+                <div id="remote-label-container" class="hidden absolute top-4 left-16 bg-black bg-opacity-50 text-white px-2 py-1 rounded z-10">
+                    <span id="remote-label">Remote</span>
+                </div>
+
+                <!-- Main Video (Remote or Screen or Local Preview if alone) -->
+                <video id="main-video" autoplay playsinline class="w-full h-full object-contain"></video>
+                
+                <!-- Local Video Overlay (Draggable) - Initially hidden or minimized? -->
+                <!-- We will manage visibility via JS depending on connection state -->
+                <div id="local-video-container" class="absolute bottom-4 right-4 w-48 h-36 bg-gray-800 rounded-lg overflow-hidden border-2 border-blue-500 shadow-2xl cursor-move z-10 transition-all duration-300">
                     <video id="local-video" autoplay playsinline muted class="w-full h-full object-cover mirror"></video>
-                    <div class="absolute bottom-1 left-1 bg-black bg-opacity-50 text-xs px-1 rounded">You</div>
+                    <div class="absolute bottom-1 left-1 bg-black bg-opacity-50 text-xs px-1 rounded"><span id="local-label">You</span></div>
                     
                     <!-- Local Mute Indicator -->
                     <div id="local-mute-indicator" class="hidden absolute top-1 right-1 bg-red-600 text-white p-1 rounded-full shadow">
@@ -68,7 +78,7 @@
             </div>
 
             <!-- Controls -->
-            <div class="bg-gray-800 p-4 flex justify-center items-center space-x-4">
+            <div class="bg-gray-800 p-4 flex flex-wrap justify-center items-center gap-4">
                 <button id="toggle-mic" title="Toggle Microphone" class="bg-gray-700 hover:bg-gray-600 text-white w-12 h-12 rounded-full font-semibold flex items-center justify-center transition">
                     <!-- Mic Icon -->
                     <svg id="icon-mic-on" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
