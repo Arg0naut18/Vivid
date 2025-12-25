@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
   let localStream;
   let remoteStream;
+  let remoteScreenStream; // New: For receiving screen share
   let peerConnection;
   let socket;
   let roomId;
@@ -10,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let currentScreenStream;
   let currentScreenVideoTrack;
+  let currentScreenSender; // New: To track the sender for removal
 
   let audioContext;
   let audioDestination;
@@ -194,13 +196,34 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     peerConnection.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        remoteStream = event.streams[0];
-      } else {
-        if (!remoteStream) remoteStream = new MediaStream();
-        remoteStream.addTrack(event.track);
+      const stream = event.streams[0] || new MediaStream([event.track]);
+
+      if (!remoteStream) {
+        // First stream is considered the primary Camera stream
+        remoteStream = stream;
+        switchToConnectedView();
+      } else if (remoteStream.id !== stream.id) {
+        // Second stream is the Screen Share
+        remoteScreenStream = stream;
+
+        // Show Screen Share in Main Video
+        mainVideo.srcObject = remoteScreenStream;
+        mainVideo.classList.remove("mirror");
+
+        // Move Remote Camera to Overlay
+        remoteVideoOverlay.srcObject = remoteStream;
+        remoteVideoOverlay.muted = false; // Ensure audio is enabled if track has it (though usually mixed)
+        remoteOverlayContainer.classList.remove("hidden");
+
+        // Handle Stream Removal (Stop Share)
+        stream.onremovetrack = () => {
+          remoteScreenStream = null;
+          // Revert Main Video to Remote Camera
+          mainVideo.srcObject = remoteStream;
+          remoteVideoOverlay.srcObject = null;
+          remoteOverlayContainer.classList.add("hidden");
+        };
       }
-      switchToConnectedView();
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -294,6 +317,15 @@ document.addEventListener("DOMContentLoaded", () => {
           remoteMuteIndicator.classList.add("hidden");
         } else {
           remoteMuteIndicator.classList.remove("hidden");
+        }
+        break;
+
+      case "screen-share-status":
+        if (msg.isSharing) {
+          showToast("Remote user is sharing their screen");
+          mainVideo.classList.remove("mirror");
+        } else {
+          showToast("Remote user stopped sharing screen");
         }
         break;
 
@@ -441,11 +473,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const mixedAudioTrack = audioDestination.stream.getAudioTracks()[0];
 
       if (peerConnection) {
-        const videoSender = peerConnection
-          .getSenders()
-          .find((s) => s.track && s.track.kind === "video");
-        if (videoSender)
-          await videoSender.replaceTrack(currentScreenVideoTrack);
+        // Add Screen Video Track (send as a separate stream)
+        currentScreenSender = peerConnection.addTrack(
+          currentScreenVideoTrack,
+          currentScreenStream,
+        );
+
+        // Replace Audio Track (send mixed audio on the primary audio sender)
         const audioSender = peerConnection
           .getSenders()
           .find((s) => s.track && s.track.kind === "audio");
@@ -455,6 +489,7 @@ document.addEventListener("DOMContentLoaded", () => {
       updateUIForScreenShare(true);
       currentScreenVideoTrack.onended = () => stopScreenShare();
       isScreenSharing = true;
+      sendSignal({ type: "screen-share-status", isSharing: true });
     } catch (err) {}
   }
 
@@ -462,12 +497,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!isScreenSharing) return;
 
     if (peerConnection) {
-      const videoSender = peerConnection
-        .getSenders()
-        .find((s) => s.track && s.track.kind === "video");
-      const localVideoTrack = localStream.getVideoTracks()[0];
-      if (videoSender) await videoSender.replaceTrack(localVideoTrack);
+      // Remove Screen Video Track
+      if (currentScreenSender) {
+        peerConnection.removeTrack(currentScreenSender);
+        currentScreenSender = null;
+      }
 
+      // Restore Audio Track
       const audioSender = peerConnection
         .getSenders()
         .find((s) => s.track && s.track.kind === "audio");
@@ -486,6 +522,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (document.pictureInPictureElement)
       document.exitPictureInPicture().catch((e) => {});
     isScreenSharing = false;
+    sendSignal({ type: "screen-share-status", isSharing: false });
   }
 
   function updateUIForScreenShare(isSharing) {
@@ -515,6 +552,8 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
       }
+      
+      showToast("You are sharing your screen. Minimize this window to avoid the mirror effect.");
 
       shareScreenBtn.classList.replace("bg-blue-600", "bg-green-600");
       shareScreenBtn.classList.replace(
