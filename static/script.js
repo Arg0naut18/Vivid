@@ -17,11 +17,8 @@ let audioDestination;
 let micSource;
 let screenAudioSource;
 
-// ICE Queue & State
+// ICE Queue
 let iceCandidatesQueue = [];
-let isPolite = false;
-let makingOffer = false;
-let ignoreOffer = false;
 
 // ICE Servers (STUN)
 const rtcConfig = {
@@ -43,10 +40,9 @@ const roomInfo = document.getElementById('room-info');
 const toastContainer = document.getElementById('toast-container');
 
 // Video Elements
-// main-video is the Big background video (Remote usually, or Local if waiting)
 const mainVideo = document.getElementById('main-video'); 
-const localVideo = document.getElementById('local-video'); // The PIP local video
-const remoteVideoOverlay = document.getElementById('remote-video-overlay'); // The PIP remote video (when sharing)
+const localVideo = document.getElementById('local-video'); 
+const remoteVideoOverlay = document.getElementById('remote-video-overlay'); 
 
 const localVideoContainer = document.getElementById('local-video-container');
 const remoteOverlayContainer = document.getElementById('remote-overlay-container');
@@ -59,13 +55,14 @@ const localLabel = document.getElementById('local-label');
 const remoteLabel = document.getElementById('remote-label');
 const remoteLabelContainer = document.getElementById('remote-label-container');
 
-// Buttons & Icons
+// Buttons
 const shareScreenBtn = document.getElementById('share-screen');
 const stopShareBtn = document.getElementById('stop-share');
 const leaveBtn = document.getElementById('leave-btn');
 const toggleMicBtn = document.getElementById('toggle-mic');
 const toggleVideoBtn = document.getElementById('toggle-video');
 
+// Icons
 const iconMicOn = document.getElementById('icon-mic-on');
 const iconMicOff = document.getElementById('icon-mic-off');
 const iconVideoOn = document.getElementById('icon-video-on');
@@ -86,7 +83,6 @@ joinBtn.onclick = async () => {
         return;
     }
     
-    // Authenticate
     try {
         const response = await fetch('/api/join', {
             method: 'POST',
@@ -135,13 +131,15 @@ async function startCall() {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         
-        // Initial View: Local Video is Main (Waiting state)
+        // 1. Initial State: Alone in room
+        // Show Local Video in MAIN container (Full Screen)
         mainVideo.srcObject = localStream;
         mainVideo.muted = true; // Mute self
-        mainVideo.classList.add('mirror'); // Mirror self view
+        mainVideo.classList.add('mirror'); 
         
-        // Hide small PIP initially since it's redundant
-        localVideoContainer.classList.add('hidden'); 
+        // Hide PIP container
+        localVideoContainer.classList.add('hidden');
+        remoteLabelContainer.classList.add('hidden');
 
         connectSocket();
 
@@ -157,7 +155,6 @@ function connectSocket() {
 
     socket.onopen = () => {
         console.log('Connected to signaling server');
-        isPolite = true; // Newer user is polite
         sendSignal({ type: 'announce', name: userName });
     };
 
@@ -169,7 +166,7 @@ function connectSocket() {
     socket.onclose = (event) => {
         console.log("Disconnected from server.", event.code, event.reason);
         if (event.code === 1008 || event.code === 403) {
-            alert("Connection closed (Auth Failed or Room Full): " + event.reason);
+            alert("Connection closed: " + event.reason);
             window.location.reload(); 
         } else {
             setTimeout(connectSocket, 3000);
@@ -180,18 +177,20 @@ function connectSocket() {
 async function createPeerConnection() {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
+    // Add local tracks
     localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
     });
 
+    // Handle Remote Stream
     peerConnection.ontrack = (event) => {
-        console.log("Remote track received", event.streams[0]);
+        console.log("Remote track received");
         remoteStream = event.streams[0];
         
-        // Peer Connected! Switch Views
+        // Switch View: Remote goes to Main, Local goes to PIP
         switchToConnectedView();
         
-        // Wait for video to be ready
+        // Ensure playback
         mainVideo.onloadedmetadata = () => {
              mainVideo.play().catch(e => console.error("Remote video auto-play failed:", e));
         };
@@ -208,32 +207,26 @@ async function createPeerConnection() {
         if (peerConnection.connectionState === 'failed') {
             peerConnection.restartIce();
         }
-    };
-    
-    // Perfect Negotiation Logic
-    peerConnection.onnegotiationneeded = async () => {
-        try {
-            makingOffer = true;
-            await peerConnection.setLocalDescription();
-            sendSignal({ type: 'offer', sdp: peerConnection.localDescription });
-        } catch (err) {
-            console.error(err);
-        } finally {
-            makingOffer = false;
+        if (peerConnection.connectionState === 'disconnected') {
+            // Optional: Revert to waiting view?
+            // For now, let's keep it simple.
         }
     };
 }
 
 function switchToConnectedView() {
-    // 1. Main Video becomes Remote
-    mainVideo.srcObject = remoteStream;
-    mainVideo.muted = false; // Unmute remote
-    mainVideo.classList.remove('mirror'); // Don't mirror remote
-    remoteLabelContainer.classList.remove('hidden');
+    // Prevent flickering if already switched
+    if (mainVideo.srcObject === remoteStream) return;
 
-    // 2. Local Video goes to PIP
+    // 1. Move Local to PIP
     localVideo.srcObject = localStream;
     localVideoContainer.classList.remove('hidden');
+
+    // 2. Put Remote in Main
+    mainVideo.srcObject = remoteStream;
+    mainVideo.muted = false; // Unmute remote
+    mainVideo.classList.remove('mirror');
+    remoteLabelContainer.classList.remove('hidden');
 }
 
 async function handleSignalMessage(msg) {
@@ -241,12 +234,11 @@ async function handleSignalMessage(msg) {
 
     switch (msg.type) {
         case 'announce':
-            isPolite = false; // Existing user is impolite
             console.log(`User ${msg.name} joined.`);
-            showToast(`${msg.name} has joined the session!`);
+            showToast(`${msg.name} has joined!`);
             remoteLabel.innerText = msg.name || "Remote";
             
-            // Trigger offer
+            // I am the Host (Received Announce). I create the Offer.
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             sendSignal({ type: 'offer', sdp: offer });
@@ -254,14 +246,6 @@ async function handleSignalMessage(msg) {
 
         case 'offer':
             console.log("Received offer");
-            // Glare handling (Perfect Negotiation)
-            const offerCollision = makingOffer || peerConnection.signalingState !== "stable";
-            ignoreOffer = !isPolite && offerCollision;
-            if (ignoreOffer) {
-                console.log("Ignoring colliding offer");
-                return;
-            }
-
             await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             processIceQueue();
             
@@ -323,19 +307,15 @@ function showToast(message) {
     toast.innerText = message;
     toastContainer.appendChild(toast);
     
-    // Fade in
     requestAnimationFrame(() => toast.classList.remove('opacity-0'));
 
-    // Remove after 3s
     setTimeout(() => {
         toast.classList.add('opacity-0');
         setTimeout(() => toast.remove(), 500);
     }, 3000);
 }
 
-
-// --- Media Control Logic (Mic/Video Toggles) --- 
-// (Same as before, simplified for brevity in this overwrite)
+// --- Media Controls ---
 
 function toggleMic() {
     if (localStream) {
@@ -383,7 +363,6 @@ function toggleVideo() {
 }
 
 // --- Screen Sharing ---
-// (Mostly same logic, ensuring UI updates point to 'mainVideo' or 'remoteVideoOverlay')
 
 async function startScreenShare() {
     try {
@@ -391,6 +370,7 @@ async function startScreenShare() {
         currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
         const screenAudioTrack = currentScreenStream.getAudioTracks()[0];
         
+        // Setup Audio Mixing
         if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
         audioDestination = audioContext.createMediaStreamDestination();
         
@@ -405,6 +385,7 @@ async function startScreenShare() {
 
         const mixedAudioTrack = audioDestination.stream.getAudioTracks()[0];
 
+        // Replace Tracks
         if (peerConnection) {
             const videoSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
             if (videoSender) await videoSender.replaceTrack(currentScreenVideoTrack);
@@ -413,23 +394,31 @@ async function startScreenShare() {
         }
 
         updateUIForScreenShare(true);
+        
+        // Listen for browser stop
         currentScreenVideoTrack.onended = () => stopScreenShare();
         isScreenSharing = true;
-    } catch (err) { console.error(err); }
+
+    } catch (err) {
+        console.error("Error starting screen share:", err);
+    }
 }
 
 async function stopScreenShare() {
     if (!isScreenSharing) return;
 
+    // Revert Tracks
     if (peerConnection) {
         const videoSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
         const localVideoTrack = localStream.getVideoTracks()[0];
         if (videoSender) await videoSender.replaceTrack(localVideoTrack);
+        
         const audioSender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
         const localAudioTrack = localStream.getAudioTracks()[0];
         if (audioSender) await audioSender.replaceTrack(localAudioTrack);
     }
     
+    // Cleanup
     if (screenAudioSource) screenAudioSource.disconnect();
     if (currentScreenStream) {
         currentScreenStream.getTracks().forEach(track => track.stop());
@@ -437,6 +426,7 @@ async function stopScreenShare() {
     }
     
     updateUIForScreenShare(false);
+    
     if (document.pictureInPictureElement) document.exitPictureInPicture().catch(console.error);
     isScreenSharing = false;
 }
@@ -444,24 +434,24 @@ async function stopScreenShare() {
 function updateUIForScreenShare(isSharing) {
     if (isSharing) {
         mainVideo.style.display = 'none'; 
-        // Prevent double audio: Mute main, play from overlay
-        mainVideo.muted = true;
+        mainVideo.muted = true; // Prevent echo
         
-        screenSharePlaceholder.style.display = 'flex';
         screenSharePlaceholder.classList.remove('hidden');
+        screenSharePlaceholder.style.display = 'flex';
 
         remoteOverlayContainer.classList.remove('hidden');
         if (remoteStream) {
             remoteVideoOverlay.srcObject = remoteStream;
-            remoteVideoOverlay.muted = false; // Ensure audio plays from overlay
+            remoteVideoOverlay.muted = false; // Enable audio from overlay
             
+            // Auto-PiP
             if (document.pictureInPictureEnabled && remoteVideoOverlay.requestPictureInPicture) {
                 if (remoteVideoOverlay.readyState >= 1) {
-                    remoteVideoOverlay.requestPictureInPicture().catch(e => console.log("Auto PiP failed/denied:", e));
+                    remoteVideoOverlay.requestPictureInPicture().catch(e => console.log("PiP denied:", e));
                 } else {
                     remoteVideoOverlay.onloadedmetadata = () => {
-                        remoteVideoOverlay.requestPictureInPicture().catch(e => console.log("Auto PiP failed/denied:", e));
-                        remoteVideoOverlay.onloadedmetadata = null; 
+                       remoteVideoOverlay.requestPictureInPicture().catch(e => console.log("PiP denied:", e));
+                       remoteVideoOverlay.onloadedmetadata = null;
                     };
                 }
             }
@@ -470,38 +460,35 @@ function updateUIForScreenShare(isSharing) {
         shareScreenBtn.classList.replace('bg-blue-600', 'bg-green-600'); 
         shareScreenBtn.classList.replace('hover:bg-blue-700', 'hover:bg-green-700');
         shareScreenBtn.title = "Change Window";
-        
         stopShareBtn.classList.remove('hidden');
 
     } else {
         mainVideo.style.display = 'block';
         
-        // Restore Audio logic: Unmute main ONLY if it's remote stream
+        // Restore Audio: Unmute main ONLY if it is the remote stream
         if (remoteStream && mainVideo.srcObject === remoteStream) {
             mainVideo.muted = false;
         } else {
-            // It's local stream (waiting) or null, keep muted
-            mainVideo.muted = true;
+            mainVideo.muted = true; // Waiting mode (local stream)
         }
         
-        screenSharePlaceholder.style.display = 'none';
         screenSharePlaceholder.classList.add('hidden');
+        screenSharePlaceholder.style.display = 'none';
 
         remoteOverlayContainer.classList.add('hidden');
         remoteVideoOverlay.srcObject = null;
-        remoteVideoOverlay.muted = true; // Mute overlay
+        remoteVideoOverlay.muted = true;
         
         if (remoteStream) mainVideo.srcObject = remoteStream; 
 
         shareScreenBtn.classList.replace('bg-green-600', 'bg-blue-600');
         shareScreenBtn.classList.replace('hover:bg-green-700', 'hover:bg-blue-700');
         shareScreenBtn.title = "Share Screen";
-        
         stopShareBtn.classList.add('hidden');
     }
 }
 
-// Draggable Utils
+// --- Draggable Utils ---
 function setupDraggable(element) {
     let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
 
@@ -517,7 +504,6 @@ function setupDraggable(element) {
     }
 
     function dragTouchStart(e) {
-        // e.preventDefault(); // Optional: might block click? usually fine for dragging.
         const touch = e.touches[0];
         pos3 = touch.clientX;
         pos4 = touch.clientY;
@@ -535,7 +521,7 @@ function setupDraggable(element) {
     }
 
     function elementTouchDrag(e) {
-        // e.preventDefault(); // Stop scrolling
+        // e.preventDefault(); 
         const touch = e.touches[0];
         pos1 = pos3 - touch.clientX;
         pos2 = pos4 - touch.clientY;
