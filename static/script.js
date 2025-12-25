@@ -16,6 +16,9 @@ let audioDestination;
 let micSource;
 let screenAudioSource;
 
+// ICE Queue
+let iceCandidatesQueue = [];
+
 // ICE Servers (STUN)
 const rtcConfig = {
     iceServers: [
@@ -193,8 +196,8 @@ function connectSocket() {
 
     socket.onclose = (event) => {
         console.log("Disconnected from server.", event.code, event.reason);
-        if (event.code === 1008) {
-            alert("Connection closed: " + event.reason);
+        if (event.code === 1008 || event.code === 403) {
+            alert("Connection closed (Auth Failed or Room Full): " + event.reason);
             window.location.reload(); 
         } else {
             setTimeout(connectSocket, 3000);
@@ -205,6 +208,7 @@ function connectSocket() {
 async function createPeerConnection() {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
+    // Add local tracks
     localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
     });
@@ -213,6 +217,8 @@ async function createPeerConnection() {
         console.log("Remote track received", event.streams[0]);
         remoteStream = event.streams[0];
         updateRemoteVideoSource();
+        // Force play
+        remoteVideo.play().catch(e => console.error("Remote video auto-play failed:", e));
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -222,6 +228,7 @@ async function createPeerConnection() {
     };
 
     peerConnection.onconnectionstatechange = () => {
+        console.log("Connection State:", peerConnection.connectionState);
         if (peerConnection.connectionState === 'failed') {
             peerConnection.restartIce();
         }
@@ -242,6 +249,8 @@ async function handleSignalMessage(msg) {
         case 'offer':
             console.log("Received offer");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            processIceQueue(); // Process queued candidates
+            
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             sendSignal({ type: 'answer', sdp: answer });
@@ -250,13 +259,19 @@ async function handleSignalMessage(msg) {
         case 'answer':
             console.log("Received answer");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            processIceQueue(); // Process queued candidates
             break;
 
         case 'ice-candidate':
-            try {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
-            } catch (e) {
-                console.error("Error adding ice candidate", e);
+            if (peerConnection.remoteDescription) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                } catch (e) {
+                    console.error("Error adding ice candidate", e);
+                }
+            } else {
+                console.log("Queueing ICE candidate (Remote description not set yet)");
+                iceCandidatesQueue.push(msg.candidate);
             }
             break;
             
@@ -268,6 +283,18 @@ async function handleSignalMessage(msg) {
                 remoteMuteIndicator.classList.remove('hidden');
             }
             break;
+    }
+}
+
+async function processIceQueue() {
+    while (iceCandidatesQueue.length > 0) {
+        const candidate = iceCandidatesQueue.shift();
+        try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log("Processed queued ICE candidate");
+        } catch (e) {
+            console.error("Error adding queued ice candidate", e);
+        }
     }
 }
 
@@ -362,7 +389,6 @@ async function stopScreenShare() {
     
     updateUIForScreenShare(false);
 
-    // Exit PiP if active
     if (document.pictureInPictureElement) {
         document.exitPictureInPicture().catch(console.error);
     }
@@ -380,16 +406,13 @@ function updateUIForScreenShare(isSharing) {
         if (remoteStream) {
             remoteVideoOverlay.srcObject = remoteStream;
             
-            // --- Auto Picture-in-Picture ---
-            // Feature detection for cross-browser compatibility
             if (document.pictureInPictureEnabled && remoteVideoOverlay.requestPictureInPicture) {
-                // Only try if video is ready. If not, wait for metadata.
                 if (remoteVideoOverlay.readyState >= 1) {
                     remoteVideoOverlay.requestPictureInPicture().catch(e => console.log("Auto PiP failed/denied:", e));
                 } else {
                     remoteVideoOverlay.onloadedmetadata = () => {
                         remoteVideoOverlay.requestPictureInPicture().catch(e => console.log("Auto PiP failed/denied:", e));
-                        remoteVideoOverlay.onloadedmetadata = null; // Cleanup
+                        remoteVideoOverlay.onloadedmetadata = null; 
                     };
                 }
             }
@@ -425,9 +448,6 @@ function updateRemoteVideoSource() {
     if (isScreenSharing) {
         remoteVideoOverlay.srcObject = remoteStream;
         remoteVideo.srcObject = remoteStream; 
-        // If we switch to sharing MID-call, the updateUI handles PiP.
-        // If we are *already* sharing and a track arrives (e.g., refresh),
-        // we might want to re-trigger PiP, but usually updateUIForScreenShare is called on toggle.
     } else {
         remoteVideo.srcObject = remoteStream;
         remoteVideoOverlay.srcObject = null;
