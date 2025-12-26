@@ -17,5 +17,7 @@ class Settings:
     TURN_USERNAME: str = os.getenv("TURN_USERNAME", "")
     TURN_PASSWORD: str = os.getenv("TURN_PASSWORD", "")
 
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "dev")
+
 
 settings = Settings()

@@ -63,11 +63,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const leaveBtn = document.getElementById("leave-btn");
   const toggleMicBtn = document.getElementById("toggle-mic");
   const toggleVideoBtn = document.getElementById("toggle-video");
+  const toggleFullscreenBtn = document.getElementById("toggle-fullscreen");
 
   const iconMicOn = document.getElementById("icon-mic-on");
   const iconMicOff = document.getElementById("icon-mic-off");
   const iconVideoOn = document.getElementById("icon-video-on");
   const iconVideoOff = document.getElementById("icon-video-off");
+  const iconFullscreenEnter = document.getElementById("icon-fullscreen-enter");
+  const iconFullscreenExit = document.getElementById("icon-fullscreen-exit");
+
+  // Fetch Client Config (Logging, etc.)
+  fetch("/api/config")
+    .then((res) => res.json())
+    .then((config) => {
+      if (config.is_production) {
+        Logger.IS_PRODUCTION = true;
+      }
+    })
+    .catch((err) => console.error("Failed to load client config", err));
 
   if (joinBtn) {
     joinBtn.onclick = async () => {
@@ -102,6 +115,7 @@ document.addEventListener("DOMContentLoaded", () => {
               .filter(Boolean);
 
             rtcConfig = fetchedConfig;
+            Logger.info("Loaded ICE servers configuration");
           }
         }
 
@@ -114,11 +128,13 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!response.ok) {
           const err = await response.json();
           alert(err.detail || "Login failed");
+          Logger.error("Login failed:", err.detail);
           return;
         }
 
         const data = await response.json();
         authToken = data.access_token;
+        Logger.success("Joined room successfully");
 
         joinScreen.classList.add("hidden");
         videoScreen.classList.remove("hidden");
@@ -129,6 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await startCall();
       } catch (err) {
         alert("Could not connect to server");
+        Logger.error("Could not connect to server", err);
       }
     };
   }
@@ -139,27 +156,88 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (toggleMicBtn) toggleMicBtn.onclick = toggleMic;
   if (toggleVideoBtn) toggleVideoBtn.onclick = toggleVideo;
+  if (toggleFullscreenBtn) toggleFullscreenBtn.onclick = toggleFullscreen;
+
+  document.addEventListener("fullscreenchange", updateFullscreenIcon);
 
   if (localVideoContainer) setupDraggable(localVideoContainer);
   if (remoteOverlayContainer) setupDraggable(remoteOverlayContainer);
 
+  function toggleFullscreen() {
+      const container = document.getElementById("video-screen");
+      if (!document.fullscreenElement) {
+          container.requestFullscreen().catch(err => {
+              Logger.error(`Error attempting to enable fullscreen: ${err.message} (${err.name})`);
+          });
+      } else {
+          document.exitFullscreen();
+      }
+  }
+
+  function updateFullscreenIcon() {
+      if (document.fullscreenElement) {
+          iconFullscreenEnter.classList.add("hidden");
+          iconFullscreenExit.classList.remove("hidden");
+          toggleFullscreenBtn.title = "Exit Fullscreen";
+      } else {
+          iconFullscreenEnter.classList.remove("hidden");
+          iconFullscreenExit.classList.add("hidden");
+          toggleFullscreenBtn.title = "Enter Fullscreen";
+      }
+  }
+
   async function startCall() {
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      // 1. Try Audio + Video
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+      } catch (avErr) {
+        Logger.warn("Could not get Audio+Video, trying Audio only...", avErr);
+        // 2. Try Audio Only
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: true,
+          });
+          showToast("Camera access denied/failed. Joining with Audio only.");
+        } catch (aErr) {
+          Logger.warn("Could not get Audio, joining as receive-only...", aErr);
+          // 3. Fallback: No Media (Receive Only)
+          localStream = new MediaStream();
+          showToast("Microphone access denied/failed. Joining as receive-only.");
+        }
+      }
 
-      mainVideo.srcObject = localStream;
-      mainVideo.muted = true;
-      mainVideo.classList.add("mirror");
+      // If we have video, show it
+      if (localStream.getVideoTracks().length > 0) {
+        mainVideo.srcObject = localStream;
+        mainVideo.muted = true;
+        mainVideo.classList.add("mirror");
 
-      localVideoContainer.classList.add("hidden");
-      remoteLabelContainer.classList.add("hidden");
+        localVideo.srcObject = localStream; // Also set local preview
+      } else {
+        // No video: Hide local preview
+        localVideoContainer.classList.add("hidden");
+      }
 
+      // If we have no audio, update UI buttons
+      if (localStream.getAudioTracks().length === 0) {
+        toggleMicBtn.disabled = true;
+        toggleMicBtn.classList.add("opacity-50", "cursor-not-allowed");
+      }
+      if (localStream.getVideoTracks().length === 0) {
+        toggleVideoBtn.disabled = true;
+        toggleVideoBtn.classList.add("opacity-50", "cursor-not-allowed");
+      }
+
+      Logger.info("Local media stream acquired (or initialized empty)");
       connectSocket();
     } catch (err) {
-      alert("Could not access camera/microphone");
+      alert("Unexpected error starting call: " + err.message);
+      Logger.error("Critical error in startCall", err);
     }
   }
 
@@ -170,19 +248,23 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
     socket.onopen = () => {
+      Logger.success("WebSocket connected");
       sendSignal({ type: "announce", name: userName });
     };
 
     socket.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
+      Logger.debug("Received signal:", msg.type);
       handleSignalMessage(msg);
     };
 
     socket.onclose = (event) => {
       if (event.code === 1008 || event.code === 403) {
         alert("Connection closed: " + event.reason);
+        Logger.error("WebSocket closed with error:", event.reason);
         window.location.reload();
       } else {
+        Logger.warn("WebSocket disconnected, retrying...");
         setTimeout(connectSocket, 3000);
       }
     };
@@ -214,6 +296,11 @@ document.addEventListener("DOMContentLoaded", () => {
         remoteVideoOverlay.srcObject = remoteStream;
         remoteVideoOverlay.muted = false; // Ensure audio is enabled if track has it (though usually mixed)
         remoteOverlayContainer.classList.remove("hidden");
+
+        // Ensure overlay plays audio/video
+        remoteVideoOverlay
+          .play()
+          .catch((e) => Logger.error("Error playing overlay video", e));
 
         // Handle Stream Removal (Stop Share)
         stream.onremovetrack = () => {
@@ -416,6 +503,8 @@ document.addEventListener("DOMContentLoaded", () => {
           localMuteIndicator.classList.remove("hidden");
         }
         sendSignal({ type: "mic-status", enabled: isEnabled });
+      } else {
+        showToast("No microphone detected.");
       }
     }
   }
@@ -433,6 +522,8 @@ document.addEventListener("DOMContentLoaded", () => {
           );
           iconVideoOn.classList.remove("hidden");
           iconVideoOff.classList.add("hidden");
+          
+          localVideoContainer.classList.remove("hidden");
         } else {
           toggleVideoBtn.classList.replace("bg-gray-700", "bg-red-600");
           toggleVideoBtn.classList.replace(
@@ -442,31 +533,77 @@ document.addEventListener("DOMContentLoaded", () => {
           iconVideoOn.classList.add("hidden");
           iconVideoOff.classList.remove("hidden");
         }
+      } else {
+        showToast("No camera detected.");
       }
     }
   }
 
   async function startScreenShare() {
+    // Detect Firefox/Gecko
+
+    const isFirefox = navigator.userAgent.toLowerCase().indexOf("firefox") > -1;
+
+    if (isFirefox) {
+      showToast(
+        "Firefox may not support sharing system audio. Use Chrome/Edge/Brave if audio is needed.",
+      );
+    }
+
     try {
+      Logger.info("Requesting screen share...");
+
+      // Use more standard constraints. Chrome handles system audio best with echoCancellation disabled.
+
       currentScreenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
+        video: {
+          cursor: "always",
+        },
+
+        audio: {
+          echoCancellation: false,
+
+          noiseSuppression: false,
+
+          autoGainControl: false,
+        },
       });
+
       currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
+
       const screenAudioTrack = currentScreenStream.getAudioTracks()[0];
 
-      if (!audioContext)
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      audioDestination = audioContext.createMediaStreamDestination();
+      if (screenAudioTrack) {
+        Logger.info("Screen audio track detected");
+      } else {
+        Logger.warn("No screen audio track detected");
 
-      if (!micSource && localStream.getAudioTracks().length > 0)
+        if (!isFirefox) {
+          showToast(
+            "System audio not captured. Did you check 'Share system audio'?",
+          );
+        }
+      }
+
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioDestination = audioContext.createMediaStreamDestination();
+      }
+
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+
+      // Setup Mic Source if not exists and connect it ONLY ONCE
+      if (!micSource && localStream.getAudioTracks().length > 0) {
         micSource = audioContext.createMediaStreamSource(localStream);
-      if (micSource) micSource.connect(audioDestination);
+        micSource.connect(audioDestination);
+      }
 
       if (screenAudioTrack) {
         if (screenAudioSource) screenAudioSource.disconnect();
-        screenAudioSource =
-          audioContext.createMediaStreamSource(currentScreenStream);
+        const audioStream = new MediaStream([screenAudioTrack]);
+        screenAudioSource = audioContext.createMediaStreamSource(audioStream);
         screenAudioSource.connect(audioDestination);
       }
 
@@ -483,14 +620,20 @@ document.addEventListener("DOMContentLoaded", () => {
         const audioSender = peerConnection
           .getSenders()
           .find((s) => s.track && s.track.kind === "audio");
-        if (audioSender) await audioSender.replaceTrack(mixedAudioTrack);
+        if (audioSender) {
+          Logger.info("Replacing audio track with mixed audio");
+          await audioSender.replaceTrack(mixedAudioTrack);
+        }
       }
 
       updateUIForScreenShare(true);
       currentScreenVideoTrack.onended = () => stopScreenShare();
       isScreenSharing = true;
+      Logger.info("Screen sharing started");
       sendSignal({ type: "screen-share-status", isSharing: true });
-    } catch (err) {}
+    } catch (err) {
+      Logger.error("Error starting screen share:", err);
+    }
   }
 
   async function stopScreenShare() {
@@ -552,8 +695,10 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
       }
-      
-      showToast("You are sharing your screen. Minimize this window to avoid the mirror effect.");
+
+      showToast(
+        "You are sharing your screen. Minimize this window to avoid the mirror effect.",
+      );
 
       shareScreenBtn.classList.replace("bg-blue-600", "bg-green-600");
       shareScreenBtn.classList.replace(

@@ -19,21 +19,28 @@ Vivid is a secure, real-time video calling application built with **FastAPI** an
 
 ### 2. Installation
 ```bash
-# Install dependencies
+# Install dependencies using uv
 uv sync
-# OR
-pip install -r requirements.txt
 ```
 
-### 3. Running Locally
-```bash
-# Set a secret key for JWT (Optional for local dev)
-# Windows: set SECRET_KEY=your_secret
-# Linux/macOS: export SECRET_KEY=your_secret
+### 3. Running Locally (Windows/Linux/Mac)
+Use the built-in Uvicorn server for development.
 
-python main.py
+```bash
+# Start the development server
+uv run main.py
 ```
 Open [http://localhost:8000](http://localhost:8000) in your browser.
+
+### 4. Running in Production (Linux/Mac Only)
+For production environments (e.g., Render, Fly.io, Ubuntu VPS), use **Gunicorn** with Uvicorn workers for process management.
+
+> **Note:** Gunicorn does not support Windows. Windows users should stick to `uv run main.py`.
+
+```bash
+# Start the server using uv
+uv run gunicorn -c gunicorn_conf.py main:app
+```
 
 ## 🛠 Tech Stack
 
