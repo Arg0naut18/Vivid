@@ -12,11 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentScreenStream;
   let currentScreenVideoTrack;
   let currentScreenSender; // New: To track the sender for removal
-
-  let audioContext;
-  let audioDestination;
-  let micSource;
-  let screenAudioSource;
+  let currentScreenAudioSender; // New: To track the audio sender for removal
 
   let iceCandidatesQueue = [];
 
@@ -50,7 +46,18 @@ document.addEventListener("DOMContentLoaded", () => {
   );
 
   const localMuteIndicator = document.getElementById("local-mute-indicator");
-  const remoteMuteIndicator = document.getElementById("remote-mute-indicator");
+  
+  // Indicators
+  const mainVideoMuteIndicator = document.getElementById("main-video-mute-indicator");
+  const mainVideoOffIndicator = document.getElementById("main-video-off-indicator");
+  const localVideoOffIndicator = document.getElementById("local-video-off-indicator");
+  
+  const remoteOverlayVideoOffIndicator = document.getElementById("remote-overlay-video-off-indicator");
+  const remoteOverlayMuteIndicator = document.getElementById("remote-overlay-mute-indicator");
+
+  // Remote State
+  let isRemoteVideoEnabled = true;
+  let isRemoteAudioEnabled = true;
 
   const localLabel = document.getElementById("local-label");
   const remoteLabel = document.getElementById("remote-label");
@@ -58,7 +65,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "remote-label-container",
   );
 
-  const sharedVolumeControl = document.getElementById("shared-volume-control");
+  const sharedVolumeContainer = document.getElementById("shared-volume-container");
   const sharedVolumeSlider = document.getElementById("shared-volume-slider");
   let previousMainVolume = 1;
 
@@ -358,7 +365,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Handle Shared Volume Control
         previousMainVolume = mainVideo.volume; // Save current volume (likely 1 or user set)
-        sharedVolumeControl.classList.remove("hidden");
+        sharedVolumeContainer.classList.remove("hidden");
         sharedVolumeSlider.value = previousMainVolume; 
         
         // Move Remote Camera to Overlay
@@ -378,7 +385,7 @@ document.addEventListener("DOMContentLoaded", () => {
           mainVideo.srcObject = remoteStream;
           
           // Restore Volume and Hide Control
-          sharedVolumeControl.classList.add("hidden");
+          sharedVolumeContainer.classList.add("hidden");
           mainVideo.volume = previousMainVolume;
 
           remoteVideoOverlay.srcObject = null;
@@ -423,6 +430,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mainVideo.paused) {
       mainVideo.play().catch((e) => {});
     }
+    
+    updateRemoteVideoUI();
+    updateRemoteAudioUI();
   }
 
   async function handleSignalMessage(msg) {
@@ -474,11 +484,13 @@ document.addEventListener("DOMContentLoaded", () => {
         break;
 
       case "mic-status":
-        if (msg.enabled) {
-          remoteMuteIndicator.classList.add("hidden");
-        } else {
-          remoteMuteIndicator.classList.remove("hidden");
-        }
+        isRemoteAudioEnabled = msg.enabled;
+        updateRemoteAudioUI();
+        break;
+
+      case "video-status":
+        isRemoteVideoEnabled = msg.enabled;
+        updateRemoteVideoUI();
         break;
 
       case "screen-share-status":
@@ -539,9 +551,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     remoteLabelContainer.classList.add("hidden");
     
-    if (sharedVolumeControl) sharedVolumeControl.classList.add("hidden");
+    if (sharedVolumeContainer) sharedVolumeContainer.classList.add("hidden");
 
-    remoteMuteIndicator.classList.add("hidden");
+    mainVideoMuteIndicator.classList.add("hidden");
+    mainVideoOffIndicator.classList.add("hidden");
+    remoteOverlayMuteIndicator.classList.add("hidden");
+    remoteOverlayVideoOffIndicator.classList.add("hidden");
+    
+    isRemoteVideoEnabled = true;
+    isRemoteAudioEnabled = true;
+
     remoteLabel.innerText = "Remote";
   }
 
@@ -625,6 +644,8 @@ document.addEventListener("DOMContentLoaded", () => {
           iconVideoOn.classList.remove("hidden");
           iconVideoOff.classList.add("hidden");
           
+          localVideoOffIndicator.classList.add("hidden");
+
           if (remoteStream) {
             localVideoContainer.classList.remove("hidden");
           }
@@ -636,7 +657,10 @@ document.addEventListener("DOMContentLoaded", () => {
           );
           iconVideoOn.classList.add("hidden");
           iconVideoOff.classList.remove("hidden");
+          
+          localVideoOffIndicator.classList.remove("hidden");
         }
+        sendSignal({ type: "video-status", enabled: videoTrack.enabled });
       } else {
         showToast("No camera detected.");
       }
@@ -689,30 +713,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        audioDestination = audioContext.createMediaStreamDestination();
-      }
-
-      if (audioContext.state === "suspended") {
-        await audioContext.resume();
-      }
-
-      // Setup Mic Source if not exists and connect it ONLY ONCE
-      if (!micSource && localStream.getAudioTracks().length > 0) {
-        micSource = audioContext.createMediaStreamSource(localStream);
-        micSource.connect(audioDestination);
-      }
-
-      if (screenAudioTrack) {
-        if (screenAudioSource) screenAudioSource.disconnect();
-        const audioStream = new MediaStream([screenAudioTrack]);
-        screenAudioSource = audioContext.createMediaStreamSource(audioStream);
-        screenAudioSource.connect(audioDestination);
-      }
-
-      const mixedAudioTrack = audioDestination.stream.getAudioTracks()[0];
-
       if (peerConnection) {
         // Add Screen Video Track (send as a separate stream)
         currentScreenSender = peerConnection.addTrack(
@@ -720,13 +720,13 @@ document.addEventListener("DOMContentLoaded", () => {
           currentScreenStream,
         );
 
-        // Replace Audio Track (send mixed audio on the primary audio sender)
-        const audioSender = peerConnection
-          .getSenders()
-          .find((s) => s.track && s.track.kind === "audio");
-        if (audioSender) {
-          Logger.info("Replacing audio track with mixed audio");
-          await audioSender.replaceTrack(mixedAudioTrack);
+        // Add Screen Audio Track (if available) to the SAME stream
+        if (screenAudioTrack) {
+            currentScreenAudioSender = peerConnection.addTrack(
+                screenAudioTrack,
+                currentScreenStream
+            );
+            Logger.info("Added screen audio track separately");
         }
       }
 
@@ -750,15 +750,13 @@ document.addEventListener("DOMContentLoaded", () => {
         currentScreenSender = null;
       }
 
-      // Restore Audio Track
-      const audioSender = peerConnection
-        .getSenders()
-        .find((s) => s.track && s.track.kind === "audio");
-      const localAudioTrack = localStream.getAudioTracks()[0];
-      if (audioSender) await audioSender.replaceTrack(localAudioTrack);
+      // Remove Screen Audio Track
+      if (currentScreenAudioSender) {
+          peerConnection.removeTrack(currentScreenAudioSender);
+          currentScreenAudioSender = null;
+      }
     }
 
-    if (screenAudioSource) screenAudioSource.disconnect();
     if (currentScreenStream) {
       currentScreenStream.getTracks().forEach((track) => track.stop());
       currentScreenStream = null;
@@ -837,6 +835,9 @@ document.addEventListener("DOMContentLoaded", () => {
       shareScreenBtn.title = "Share Screen";
       stopShareBtn.classList.add("hidden");
     }
+    
+    updateRemoteVideoUI();
+    updateRemoteAudioUI();
   }
 
   function setupDraggable(element) {
@@ -931,5 +932,64 @@ document.addEventListener("DOMContentLoaded", () => {
             };
         }
     });
+  }
+
+  function updateRemoteVideoUI() {
+    if (!remoteStream) return;
+
+    // Check where the remote stream is displayed
+    const isRemoteInMain = (mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id);
+    const isRemoteInOverlay = (remoteVideoOverlay.srcObject && remoteVideoOverlay.srcObject.id === remoteStream.id);
+
+    if (isRemoteInMain) {
+        if (isRemoteVideoEnabled) {
+            mainVideoOffIndicator.classList.add("hidden");
+        } else {
+            mainVideoOffIndicator.classList.remove("hidden");
+        }
+        // Ensure overlay indicator is hidden if not there
+        remoteOverlayVideoOffIndicator.classList.add("hidden");
+    } else if (isRemoteInOverlay) {
+        if (isRemoteVideoEnabled) {
+            remoteOverlayVideoOffIndicator.classList.add("hidden");
+        } else {
+            remoteOverlayVideoOffIndicator.classList.remove("hidden");
+        }
+        // Ensure main indicator is hidden if not there
+        mainVideoOffIndicator.classList.add("hidden");
+    } else {
+        // Remote stream not visible? Hide both
+        mainVideoOffIndicator.classList.add("hidden");
+        remoteOverlayVideoOffIndicator.classList.add("hidden");
+    }
+  }
+
+  function updateRemoteAudioUI() {
+    if (!remoteStream) return;
+
+    const isRemoteInMain = (mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id);
+    const isRemoteInOverlay = (remoteVideoOverlay.srcObject && remoteVideoOverlay.srcObject.id === remoteStream.id);
+
+    // Mute indicator shows when Audio is DISABLED (muted)
+    const showIndicator = !isRemoteAudioEnabled;
+
+    if (isRemoteInMain) {
+        if (showIndicator) {
+            mainVideoMuteIndicator.classList.remove("hidden");
+        } else {
+            mainVideoMuteIndicator.classList.add("hidden");
+        }
+        remoteOverlayMuteIndicator.classList.add("hidden");
+    } else if (isRemoteInOverlay) {
+        if (showIndicator) {
+            remoteOverlayMuteIndicator.classList.remove("hidden");
+        } else {
+            remoteOverlayMuteIndicator.classList.add("hidden");
+        }
+        mainVideoMuteIndicator.classList.add("hidden");
+    } else {
+        mainVideoMuteIndicator.classList.add("hidden");
+        remoteOverlayMuteIndicator.classList.add("hidden");
+    }
   }
 });

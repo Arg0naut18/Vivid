@@ -98,21 +98,28 @@ video {
     width: 100%;
     background: rgba(31, 41, 55, 0.8);
     backdrop-filter: blur(5px);
+    
+    /* Hide by default in fullscreen */
+    transform: translateY(100%);
     opacity: 0;
-    transition: opacity 0.3s ease-in-out;
+    
+    transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
     z-index: 100;
+}
+
+#video-screen:fullscreen #fullscreen-hover-trigger {
+    display: block !important;
+}
+
+/* Show controls when trigger or bar is hovered */
+#video-screen:fullscreen #fullscreen-hover-trigger:hover ~ #controls-bar,
+#video-screen:fullscreen #controls-bar:hover {
+    transform: translateY(0);
+    opacity: 1;
 }
 
 #chat-sidebar {
     z-index: 110 !important;
-}
-
-#video-screen:fullscreen:hover #controls-bar {
-    opacity: 1;
-}
-
-#video-screen:fullscreen #controls-bar:hover {
-    opacity: 1;
 }
 
 /* Custom Scrollbar for Chat */
@@ -174,4 +181,10 @@ video {
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(5px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* Vertical Slider */
+.vertical-slider {
+    -webkit-appearance: slider-vertical; /* Webkit */
+    writing-mode: bt-lr; /* IE */
 }

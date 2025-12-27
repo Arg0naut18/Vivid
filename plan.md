@@ -1,7 +1,7 @@
 # Architecture & Implementation Documentation: Vivid
 
 ## 1. Project Overview
-**Vivid** is a secure, real-time, peer-to-peer (P2P) video calling application designed for 1-on-1 sessions. It emphasizes security, ease of use, and a modern user experience with features like screen sharing, audio mixing, picture-in-picture, and session-based chat.
+**Vivid** is a secure, real-time, peer-to-peer (P2P) video calling application designed for 1-on-1 sessions. It emphasizes security, ease of use, and a modern user experience with features like screen sharing, independent audio control, picture-in-picture, and session-based chat.
 
 ## 2. System Architecture
 
@@ -44,7 +44,7 @@ The frontend handles all media capture, P2P connection logic, and UI state.
     *   **ICE Handling**: Queues ICE candidates if the remote description hasn't been set yet.
     *   **Screen Sharing**:
         *   **Dual Stream Architecture**: Adds a *second* video track (`addTrack`) instead of replacing the camera track.
-        *   **Audio Mixing**: Uses `AudioContext` to mix Microphone + System Audio.
+        *   **Separate Audio Tracks**: System audio is captured and sent as a **separate audio track** (attached to the screen share stream) rather than being mixed with the microphone. This enables the receiver to adjust shared audio volume independently.
         *   **UI Layout**: 
             *   **Screen Active**: Screen share takes the Main View. Remote user's camera moves to the Picture-in-Picture overlay.
             *   **Screen Inactive**: Remote user's camera returns to the Main View.
@@ -55,6 +55,9 @@ The frontend handles all media capture, P2P connection logic, and UI state.
             *   **Draggable**: Windows can be dragged around the screen (drag logic excludes resize handle).
             *   **Minimizable**: Windows have a header (visible on hover) with a "Minimize" button. Minimizing shrinks the window to a small icon; clicking it restores the view.
             *   **Auto-Reset**: Windows reset to default state/position when session ends.
+    *   **Fullscreen Experience**:
+        *   **Smart Controls**: In fullscreen mode, the controls bar slides down and disappears to provide an unobstructed view. 
+        *   **Bottom-Hover Trigger**: Controls reappear automatically when the mouse is hovered at the bottom of the screen (bottom 128px), using an invisible hover sensor.
 
 ## 3. Data Flow
 
@@ -97,7 +100,7 @@ The frontend handles all media capture, P2P connection logic, and UI state.
 *   **Firefox/Zen Browser**: System audio sharing limitation on Windows.
 *   **Mobile Screen Share**: Browser restrictions apply.
 
-## 7. New Feature: Session Chat
+## 7. Session Chat
 
 ### 7.1 Overview
 A real-time text chat feature residing in a toggleable sidebar on the right side.
@@ -108,4 +111,25 @@ A real-time text chat feature residing in a toggleable sidebar on the right side
 *   **Session Persistence Only**: Messages exist only in browser memory.
 *   **Auto-Clear**: Chat history clears on session end/user left.
 *   **System Integration**: Toast notifications (e.g., "User joined") are mirrored as system messages in the chat log.
-*   **Z-Index**: Chat floats above video and controls (`z-index: 110`).
+
+## 8. Shared Audio Volume Control
+
+### 8.1 Implementation
+*   **Dynamic UI**: A volume button appears in the controls bar **only** when a remote screen share (with audio) is detected.
+*   **Vertical Slider**: Hovering over the volume button reveals a vertical slider above it for fine-tuned adjustment.
+*   **Independent Volume**: Modifies the `volume` property of the `mainVideo` element. Since screen audio is sent as a separate track on the screen-share stream, this slider adjusts the share volume without affecting the remote user's microphone volume (which is played via the PIP overlay).
+*   **UX Bridge**: An invisible container bridge ensures the slider doesn't close when moving the mouse between the button and the slider popup.
+
+## 9. Video & Audio Status Indicators
+
+### 9.1 Overview
+Visual feedback for media states (Camera On/Off, Mute/Unmute) is crucial for user confidence. This system ensures indicators are consistent for both local self-view and remote peer view.
+
+### 9.2 Implementation
+*   **Camera Off Placeholders**:
+    *   **Local**: When the user disables their camera, the local PIP displays a "Camera Off" icon.
+    *   **Remote**: When the remote peer disables their camera, the recipient sees a "Camera Off" placeholder in the appropriate container (Main View or PIP Overlay).
+    *   **Signaling**: A dedicated `video-status` signal is sent via WebSocket to trigger the remote UI update.
+*   **Mute Indicators**:
+    *   **Context-Aware**: Red microphone icons appear on the video feed of the user who is muted.
+    *   **Sync Logic**: The `mic-status` signal ensures that if the remote user mutes, the icon appears on their video stream, regardless of whether it is currently in the Main View (default) or the PIP Overlay (during screen share).
