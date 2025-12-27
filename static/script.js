@@ -58,6 +58,10 @@ document.addEventListener("DOMContentLoaded", () => {
     "remote-label-container",
   );
 
+  const sharedVolumeControl = document.getElementById("shared-volume-control");
+  const sharedVolumeSlider = document.getElementById("shared-volume-slider");
+  let previousMainVolume = 1;
+
   const shareScreenBtn = document.getElementById("share-screen");
   const stopShareBtn = document.getElementById("stop-share");
   const leaveBtn = document.getElementById("leave-btn");
@@ -92,6 +96,13 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     })
     .catch((err) => console.error("Failed to load client config", err));
+
+  // Shared Audio Volume Listener
+  if (sharedVolumeSlider) {
+      sharedVolumeSlider.oninput = (e) => {
+          mainVideo.volume = parseFloat(e.target.value);
+      };
+  }
 
   if (joinBtn) {
     joinBtn.onclick = async () => {
@@ -345,6 +356,11 @@ document.addEventListener("DOMContentLoaded", () => {
         mainVideo.srcObject = remoteScreenStream;
         mainVideo.classList.remove("mirror");
 
+        // Handle Shared Volume Control
+        previousMainVolume = mainVideo.volume; // Save current volume (likely 1 or user set)
+        sharedVolumeControl.classList.remove("hidden");
+        sharedVolumeSlider.value = previousMainVolume; 
+        
         // Move Remote Camera to Overlay
         remoteVideoOverlay.srcObject = remoteStream;
         remoteVideoOverlay.muted = false; // Ensure audio is enabled if track has it (though usually mixed)
@@ -360,6 +376,11 @@ document.addEventListener("DOMContentLoaded", () => {
           remoteScreenStream = null;
           // Revert Main Video to Remote Camera
           mainVideo.srcObject = remoteStream;
+          
+          // Restore Volume and Hide Control
+          sharedVolumeControl.classList.add("hidden");
+          mainVideo.volume = previousMainVolume;
+
           remoteVideoOverlay.srcObject = null;
           remoteOverlayContainer.classList.add("hidden");
         };
@@ -517,6 +538,8 @@ document.addEventListener("DOMContentLoaded", () => {
     remoteOverlayContainer.style.height = "";
 
     remoteLabelContainer.classList.add("hidden");
+    
+    if (sharedVolumeControl) sharedVolumeControl.classList.add("hidden");
 
     remoteMuteIndicator.classList.add("hidden");
     remoteLabel.innerText = "Remote";

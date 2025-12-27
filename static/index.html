@@ -129,6 +129,26 @@
                         <span id="remote-label">Remote</span>
                     </div>
 
+                    <!-- Shared Audio Volume Control -->
+                    <div
+                        id="shared-volume-control"
+                        class="hidden absolute top-16 left-4 bg-gray-800 bg-opacity-70 p-2 rounded-lg shadow-lg z-10 flex items-center space-x-2 transition-opacity duration-300 hover:bg-opacity-90"
+                        title="Shared Audio Volume"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                        </svg>
+                        <input
+                            type="range"
+                            id="shared-volume-slider"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value="1"
+                            class="w-24 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                    </div>
+
                     <!-- Main Video (Remote or Screen or Local Preview if alone) -->
                     <video
                         id="main-video"
