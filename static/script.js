@@ -72,6 +72,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const iconFullscreenEnter = document.getElementById("icon-fullscreen-enter");
   const iconFullscreenExit = document.getElementById("icon-fullscreen-exit");
 
+  // Chat Elements
+  const chatSidebar = document.getElementById("chat-sidebar");
+  const closeChatBtn = document.getElementById("close-chat");
+  const chatMessages = document.getElementById("chat-messages");
+  const chatForm = document.getElementById("chat-form");
+  const chatInput = document.getElementById("chat-input");
+  const toggleChatBtn = document.getElementById("toggle-chat");
+  const chatBadge = document.getElementById("chat-badge");
+
+  let isChatOpen = false;
+
   // Fetch Client Config (Logging, etc.)
   fetch("/api/config")
     .then((res) => res.json())
@@ -157,11 +168,52 @@ document.addEventListener("DOMContentLoaded", () => {
   if (toggleMicBtn) toggleMicBtn.onclick = toggleMic;
   if (toggleVideoBtn) toggleVideoBtn.onclick = toggleVideo;
   if (toggleFullscreenBtn) toggleFullscreenBtn.onclick = toggleFullscreen;
+  
+  // Chat Listeners
+  if (toggleChatBtn) toggleChatBtn.onclick = toggleChat;
+  if (closeChatBtn) closeChatBtn.onclick = toggleChat;
+  if (chatForm) {
+      chatForm.onsubmit = (e) => {
+          e.preventDefault();
+          sendChatMessage();
+      }
+  }
 
   document.addEventListener("fullscreenchange", updateFullscreenIcon);
 
   if (localVideoContainer) setupDraggable(localVideoContainer);
   if (remoteOverlayContainer) setupDraggable(remoteOverlayContainer);
+  
+  setupPIPControls();
+
+  function toggleChat() {
+      isChatOpen = !isChatOpen;
+      if (isChatOpen) {
+          chatSidebar.classList.remove("hidden");
+          chatBadge.classList.add("hidden");
+          setTimeout(() => chatInput.focus(), 100);
+      } else {
+          chatSidebar.classList.add("hidden");
+      }
+  }
+
+  function sendChatMessage() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+
+      appendChatMessage(text, "local");
+      sendSignal({ type: "chat", text: text });
+      chatInput.value = "";
+  }
+
+  function appendChatMessage(text, type) {
+      const msgDiv = document.createElement("div");
+      msgDiv.classList.add("chat-message", type);
+      msgDiv.innerText = text;
+      
+      chatMessages.appendChild(msgDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
 
   function toggleFullscreen() {
       const container = document.getElementById("video-screen");
@@ -218,6 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
         mainVideo.classList.add("mirror");
 
         localVideo.srcObject = localStream; // Also set local preview
+        localVideoContainer.classList.add("hidden"); // Hide PIP initially (alone in room)
       } else {
         // No video: Hide local preview
         localVideoContainer.classList.add("hidden");
@@ -296,7 +349,7 @@ document.addEventListener("DOMContentLoaded", () => {
         remoteVideoOverlay.srcObject = remoteStream;
         remoteVideoOverlay.muted = false; // Ensure audio is enabled if track has it (though usually mixed)
         remoteOverlayContainer.classList.remove("hidden");
-
+        
         // Ensure overlay plays audio/video
         remoteVideoOverlay
           .play()
@@ -352,7 +405,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function handleSignalMessage(msg) {
-    if (!peerConnection && msg.type !== "mic-status")
+    if (!peerConnection && msg.type !== "mic-status" && msg.type !== "chat")
       await createPeerConnection();
 
     switch (msg.type) {
@@ -415,6 +468,13 @@ document.addEventListener("DOMContentLoaded", () => {
           showToast("Remote user stopped sharing screen");
         }
         break;
+        
+      case "chat":
+          appendChatMessage(msg.text, "remote");
+          if (!isChatOpen) {
+              chatBadge.classList.remove("hidden");
+          }
+          break;
 
       case "user-left":
         handleUserLeft();
@@ -432,6 +492,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     remoteStream = null;
     switchToWaitingView();
+    
+    // Clear chat
+    chatMessages.innerHTML = "";
+    const info = document.createElement("div");
+    info.className = "text-center text-gray-500 text-sm italic";
+    info.innerText = "Session ended. Chat cleared.";
+    chatMessages.appendChild(info);
   }
 
   function switchToWaitingView() {
@@ -440,6 +507,15 @@ document.addEventListener("DOMContentLoaded", () => {
     mainVideo.classList.add("mirror");
 
     localVideoContainer.classList.add("hidden");
+    localVideoContainer.classList.remove("minimized");
+    localVideoContainer.style.width = "";
+    localVideoContainer.style.height = "";
+
+    remoteOverlayContainer.classList.add("hidden");
+    remoteOverlayContainer.classList.remove("minimized");
+    remoteOverlayContainer.style.width = "";
+    remoteOverlayContainer.style.height = "";
+
     remoteLabelContainer.classList.add("hidden");
 
     remoteMuteIndicator.classList.add("hidden");
@@ -474,6 +550,9 @@ document.addEventListener("DOMContentLoaded", () => {
       toast.classList.add("opacity-0");
       setTimeout(() => toast.remove(), 500);
     }, 3000);
+    
+    // Also add to chat
+    appendChatMessage(message, "system");
   }
 
   function toggleMic() {
@@ -523,7 +602,9 @@ document.addEventListener("DOMContentLoaded", () => {
           iconVideoOn.classList.remove("hidden");
           iconVideoOff.classList.add("hidden");
           
-          localVideoContainer.classList.remove("hidden");
+          if (remoteStream) {
+            localVideoContainer.classList.remove("hidden");
+          }
         } else {
           toggleVideoBtn.classList.replace("bg-gray-700", "bg-red-600");
           toggleVideoBtn.classList.replace(
@@ -745,6 +826,12 @@ document.addEventListener("DOMContentLoaded", () => {
     element.ontouchstart = dragTouchStart;
 
     function dragMouseDown(e) {
+      // Don't drag if we are clicking on the resize handle area (bottom right corner)
+      const rect = element.getBoundingClientRect();
+      const isResizeHandle = (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20);
+      
+      if (isResizeHandle) return;
+
       e.preventDefault();
       pos3 = e.clientX;
       pos4 = e.clientY;
@@ -754,6 +841,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function dragTouchStart(e) {
       const touch = e.touches[0];
+      const rect = element.getBoundingClientRect();
+      const isResizeHandle = (touch.clientX > rect.right - 30 && touch.clientY > rect.bottom - 30);
+      
+      if (isResizeHandle) return;
+
       pos3 = touch.clientX;
       pos4 = touch.clientY;
       document.ontouchend = closeDragElement;
@@ -791,5 +883,30 @@ document.addEventListener("DOMContentLoaded", () => {
       document.ontouchend = null;
       document.ontouchmove = null;
     }
+  }
+
+  function setupPIPControls() {
+    const containers = [localVideoContainer, remoteOverlayContainer];
+    
+    containers.forEach(container => {
+        if (!container) return;
+        
+        const minimizeBtn = container.querySelector(".minimize-btn");
+        const restoreOverlay = container.querySelector(".restore-overlay");
+        
+        if (minimizeBtn) {
+            minimizeBtn.onclick = (e) => {
+                e.stopPropagation(); // Prevent drag triggering
+                container.classList.add("minimized");
+            };
+        }
+        
+        if (restoreOverlay) {
+            restoreOverlay.onclick = (e) => {
+                e.stopPropagation();
+                container.classList.remove("minimized");
+            };
+        }
+    });
   }
 });

@@ -1,7 +1,7 @@
 # Architecture & Implementation Documentation: Vivid
 
 ## 1. Project Overview
-**Vivid** is a secure, real-time, peer-to-peer (P2P) video calling application designed for 1-on-1 sessions. It emphasizes security, ease of use, and a modern user experience with features like screen sharing, audio mixing, and picture-in-picture.
+**Vivid** is a secure, real-time, peer-to-peer (P2P) video calling application designed for 1-on-1 sessions. It emphasizes security, ease of use, and a modern user experience with features like screen sharing, audio mixing, picture-in-picture, and session-based chat.
 
 ## 2. System Architecture
 
@@ -21,7 +21,7 @@ The backend acts primarily as a **Signaling Server** and **Authentication Provid
     *   **`src/services/room_manager.py`**:
         *   Manages the state of active rooms in-memory (`rooms` dict).
         *   Uses `asynccontextmanager` to handle the WebSocket connection lifecycle (auto-cleanup on disconnect).
-        *   Broadcasts signaling messages (SDP, ICE, User Left) to the *other* peer in the room.
+        *   Broadcasts signaling messages (SDP, ICE, User Left, Chat) to the *other* peer in the room.
     *   **`src/auth/security.py`**:
         *   **JWT**: Generates signed tokens with `python-jose`. Default expiry is 30 minutes.
         *   **Hashing**: Uses `bcrypt` to securely hash room passwords.
@@ -32,80 +32,80 @@ The backend acts primarily as a **Signaling Server** and **Authentication Provid
 The frontend handles all media capture, P2P connection logic, and UI state.
 
 *   **Files**:
-    *   `static/index.html`: The structure (Login Form, Video Containers, Toast, Controls). Uses Tailwind CSS via CDN (Development mode).
+    *   `static/index.html`: The structure (Login Form, Video Containers, Chat Sidebar, Toast, Controls). Uses Tailwind CSS.
     *   `static/script.js`: The core logic engine.
-    *   `static/logger.js`: Custom logging utility for styled console output.
+    *   `static/style.css`: Custom styles for animations, scrollbars, and window management.
+    *   `static/logger.js`: Custom logging utility.
+
 *   **Key Logic Flows**:
-    *   **Signaling**: Connects to `/ws/{room_id}`. Listens for `announce`, `offer`, `answer`, `ice-candidate`, `mic-status`, `screen-share-status`, and `user-left`.
+    *   **Signaling**: Connects to `/ws/{room_id}`. Listens for `announce`, `offer`, `answer`, `ice-candidate`, `mic-status`, `screen-share-status`, `user-left`, and `chat`.
     *   **WebRTC Negotiation**:
         *   Uses basic signaling. The first user to join (or receive an announce) acts as the offerer.
-    *   **ICE Handling**: Queues ICE candidates if the remote description hasn't been set yet to prevent connection failures.
+    *   **ICE Handling**: Queues ICE candidates if the remote description hasn't been set yet.
     *   **Screen Sharing**:
         *   **Dual Stream Architecture**: Adds a *second* video track (`addTrack`) instead of replacing the camera track.
-        *   **Receiver Logic**: Distinguishes between the primary camera stream and the secondary screen stream in `ontrack` by comparing stream IDs.
-        *   **Audio Mixing**: Uses `AudioContext` to mix Microphone + System Audio into a single audio track sent to the peer. This ensures the remote user hears both the presenter's voice and the shared content's audio.
+        *   **Audio Mixing**: Uses `AudioContext` to mix Microphone + System Audio.
         *   **UI Layout**: 
             *   **Screen Active**: Screen share takes the Main View. Remote user's camera moves to the Picture-in-Picture overlay.
             *   **Screen Inactive**: Remote user's camera returns to the Main View.
-    *   **UI/UX**:
-        *   **Auto-PiP**: Automatically attempts to pop the remote video into Picture-in-Picture when sharing starts (if supported).
-        *   **Draggable Windows**: Supports Mouse and Touch events for moving the PiP window and local preview.
-        *   **Responsive**: Adapts layout for Mobile vs. Desktop using Tailwind.
+    *   **Video Window Management**:
+        *   **Self-View**: Initially hidden when the user is alone. Appears as a Picture-in-Picture (PIP) only when a remote user joins.
+        *   **Picture-in-Picture (PIP)**:
+            *   **Resizable**: Both local and remote PIP windows are resizable (via CSS `resize: both`).
+            *   **Draggable**: Windows can be dragged around the screen (drag logic excludes resize handle).
+            *   **Minimizable**: Windows have a header (visible on hover) with a "Minimize" button. Minimizing shrinks the window to a small icon; clicking it restores the view.
+            *   **Auto-Reset**: Windows reset to default state/position when session ends.
 
 ## 3. Data Flow
 
 ### 3.1 Authentication
 1.  User enters Room ID + Password.
-2.  `POST /api/join` -> Backend checks if room exists.
-    *   **New Room**: Hashes password, creates room (max 1000 rooms total), issues JWT.
-    *   **Existing Room**: Verifies hash, issues JWT.
+2.  `POST /api/join` -> Backend checks room existence/limits.
 3.  Frontend receives `access_token`.
 
 ### 3.2 Connection (Signaling)
 1.  Frontend connects to `wss://.../ws/{room_id}?token={jwt}`.
-2.  Backend validates JWT and room availability (max 2 users).
-3.  **New User** sends `announce` ("I am here").
-4.  **Existing User** receives `announce`:
-    *   Creates `Offer` -> Sends to Server -> Server relays to New User.
-5.  **New User** receives `Offer`:
-    *   Sets Remote Description.
-    *   Creates `Answer` -> Sends to Server -> Relayed to Existing User.
-6.  **P2P Established**: Media flows directly between browsers.
+2.  Backend validates JWT.
+3.  **New User** sends `announce`.
+4.  **Existing User** receives `announce`, creates `Offer`.
+5.  **New User** receives `Offer`, sends `Answer`.
+6.  **P2P Established**: Media flows directly.
 
 ### 3.3 User Disconnection
 *   **Detection**: Backend detects `WebSocketDisconnect`.
-*   **Broadcast**: Server sends `{"type": "user-left"}` to the remaining peer.
+*   **Broadcast**: Server sends `{"type": "user-left"}`.
 *   **Frontend Action**:
-    *   Closes the `RTCPeerConnection`.
-    *   Resets UI to "Waiting" state (Local preview only).
-    *   Displays a Toast notification.
+    *   Closes `RTCPeerConnection`.
+    *   Resets UI to "Waiting" state (Local PIP hidden, Chat cleared, Main view mirrors local cam).
+    *   Displays Toast.
 
 ## 4. Security Model
 
-*   **Transport Security**:
-    *   **HTTPS/WSS**: Mandatory for WebRTC and secure cookie/token handling.
-    *   **CSP**: Implemented Content-Security-Policy to mitigate XSS.
-    *   **DTLS/SRTP**: All P2P media is end-to-end encrypted.
-*   **Access Control**:
-    *   **Room Passwords**: Prevents unauthorized joining.
-    *   **2-Person Limit**: Hard enforcement in `routes.py`. A 3rd connection attempt is rejected.
-*   **Data Privacy**:
-    *   **E2EE**: The server **never** sees the video/audio stream.
-    *   **Ephemeral Rooms**: Rooms and their state exist only in RAM. Once the session ends and the last user leaves, the room is deleted.
+*   **Transport Security**: HTTPS/WSS required.
+*   **Access Control**: Room Passwords + 2-Person Limit.
+*   **Data Privacy**: End-to-End Encryption (WebRTC). Ephemeral Rooms (In-Memory). Chat history is not stored on server.
 
 ## 5. Deployment & Configuration
 
 *   **Platform**: Render (Python Web Service).
-*   **Build Command**: `pip install -r requirements.txt` (or using `uv` for faster builds).
+*   **Build Command**: `pip install -r requirements.txt` (or using `uv`).
 *   **Start Command**: `gunicorn -c gunicorn_conf.py main:app`
-*   **Environment Variables**:
-    *   `SECRET_KEY`: Used for JWT signing.
-    *   `TURN_URL`, `TURN_API_KEY`: For dynamic TURN server integration (e.g., via Metered.ca).
-    *   `TURN_USERNAME`, `TURN_PASSWORD`: For static TURN server configuration.
-    *   `ENVIRONMENT`: Set to `production` to enable production logging and security settings.
+*   **Environment Variables**: `SECRET_KEY`, `TURN_URL`, `TURN_API_KEY`, `TURN_USERNAME`, `TURN_PASSWORD`, `ENVIRONMENT`.
 
-## 6. Known Limitations & Browser Support
-*   **Persistence**: Room passwords are lost on server restart (In-Memory DB).
-*   **Firefox/Zen Browser**: Does not support system audio sharing via `getDisplayMedia` on Windows. Users are warned via UI toast.
-*   **Mobile Screen Share**: Many mobile browsers restrict outgoing screen sharing.
-*   **Tailwind CDN**: Currently using the development CDN, which shows a console warning. Recommend switching to a PostCSS build for production.
+## 6. Known Limitations
+*   **Persistence**: Room passwords lost on restart.
+*   **Firefox/Zen Browser**: System audio sharing limitation on Windows.
+*   **Mobile Screen Share**: Browser restrictions apply.
+
+## 7. New Feature: Session Chat
+
+### 7.1 Overview
+A real-time text chat feature residing in a toggleable sidebar on the right side.
+
+### 7.2 Requirements & Implementation
+*   **Toggleable UI**: Can be hidden/shown via a button in the controls bar. Includes an unread message badge.
+*   **Fullscreen Support**: Chat Sidebar is moved inside the `#video-screen` container to remain accessible in Fullscreen mode.
+*   **Session Persistence Only**: Messages exist only in browser memory.
+*   **Auto-Clear**: Chat history clears on session end/user left.
+*   **System Integration**: Toast notifications (e.g., "User joined") are mirrored as system messages in the chat log.
+*   **Z-Index**: Chat floats above video and controls (`z-index: 110`).
