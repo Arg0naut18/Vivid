@@ -32,6 +32,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const roomIdDisplay = document.getElementById("room-id-display");
   const roomInfo = document.getElementById("room-info");
   const toastContainer = document.getElementById("toast-container");
+  const bootScreen = document.getElementById("boot-screen");
 
   const mainVideo = document.getElementById("main-video");
   const localVideo = document.getElementById("local-video");
@@ -46,14 +47,24 @@ document.addEventListener("DOMContentLoaded", () => {
   );
 
   const localMuteIndicator = document.getElementById("local-mute-indicator");
-  
+
   // Indicators
-  const mainVideoMuteIndicator = document.getElementById("main-video-mute-indicator");
-  const mainVideoOffIndicator = document.getElementById("main-video-off-indicator");
-  const localVideoOffIndicator = document.getElementById("local-video-off-indicator");
-  
-  const remoteOverlayVideoOffIndicator = document.getElementById("remote-overlay-video-off-indicator");
-  const remoteOverlayMuteIndicator = document.getElementById("remote-overlay-mute-indicator");
+  const mainVideoMuteIndicator = document.getElementById(
+    "main-video-mute-indicator",
+  );
+  const mainVideoOffIndicator = document.getElementById(
+    "main-video-off-indicator",
+  );
+  const localVideoOffIndicator = document.getElementById(
+    "local-video-off-indicator",
+  );
+
+  const remoteOverlayVideoOffIndicator = document.getElementById(
+    "remote-overlay-video-off-indicator",
+  );
+  const remoteOverlayMuteIndicator = document.getElementById(
+    "remote-overlay-mute-indicator",
+  );
 
   // Remote State
   let isRemoteVideoEnabled = true;
@@ -65,7 +76,9 @@ document.addEventListener("DOMContentLoaded", () => {
     "remote-label-container",
   );
 
-  const sharedVolumeContainer = document.getElementById("shared-volume-container");
+  const sharedVolumeContainer = document.getElementById(
+    "shared-volume-container",
+  );
   const sharedVolumeSlider = document.getElementById("shared-volume-slider");
   let previousMainVolume = 1;
 
@@ -96,9 +109,48 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- API Configuration ---
   let API_BASE_URL = window.location.origin;
-  if (window.electronAPI && window.electronAPI.config && window.electronAPI.config.apiUrl) {
-      API_BASE_URL = window.electronAPI.config.apiUrl.replace(/\/$/, "");
+  if (
+    window.electronAPI &&
+    window.electronAPI.config &&
+    window.electronAPI.config.apiUrl
+  ) {
+    API_BASE_URL = window.electronAPI.config.apiUrl.replace(/\/$/, "");
   }
+
+  // --- Server Health Check (Wake up Render) ---
+  async function checkServerHealth() {
+    const healthUrl = `${API_BASE_URL}/health`;
+    let isConnected = false;
+
+    // If request takes longer than 500ms, show the boot screen
+    const showBootTimer = setTimeout(() => {
+      if (!isConnected) {
+        if (bootScreen) bootScreen.classList.remove("hidden");
+      }
+    }, 500);
+
+    const tryConnect = async () => {
+      try {
+        const res = await fetch(healthUrl);
+        if (res.ok) {
+          isConnected = true;
+          clearTimeout(showBootTimer);
+          if (bootScreen) bootScreen.classList.add("hidden");
+          Logger.info("Server is healthy/awake");
+        } else {
+          throw new Error("Server not ready");
+        }
+      } catch (e) {
+        Logger.warn("Server health check failed, retrying...", e);
+        setTimeout(tryConnect, 2000); // Retry every 2s
+      }
+    };
+
+    tryConnect();
+  }
+
+  // Start the check immediately
+  checkServerHealth();
 
   // Fetch Client Config (Logging, etc.)
   fetch(`${API_BASE_URL}/api/config`)
@@ -112,9 +164,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Shared Audio Volume Listener
   if (sharedVolumeSlider) {
-      sharedVolumeSlider.oninput = (e) => {
-          mainVideo.volume = parseFloat(e.target.value);
-      };
+    sharedVolumeSlider.oninput = (e) => {
+      mainVideo.volume = parseFloat(e.target.value);
+    };
   }
 
   if (joinBtn) {
@@ -192,74 +244,76 @@ document.addEventListener("DOMContentLoaded", () => {
   if (toggleMicBtn) toggleMicBtn.onclick = toggleMic;
   if (toggleVideoBtn) toggleVideoBtn.onclick = toggleVideo;
   if (toggleFullscreenBtn) toggleFullscreenBtn.onclick = toggleFullscreen;
-  
+
   // Chat Listeners
   if (toggleChatBtn) toggleChatBtn.onclick = toggleChat;
   if (closeChatBtn) closeChatBtn.onclick = toggleChat;
   if (chatForm) {
-      chatForm.onsubmit = (e) => {
-          e.preventDefault();
-          sendChatMessage();
-      }
+    chatForm.onsubmit = (e) => {
+      e.preventDefault();
+      sendChatMessage();
+    };
   }
 
   document.addEventListener("fullscreenchange", updateFullscreenIcon);
 
   if (localVideoContainer) setupDraggable(localVideoContainer);
   if (remoteOverlayContainer) setupDraggable(remoteOverlayContainer);
-  
+
   setupPIPControls();
 
   function toggleChat() {
-      isChatOpen = !isChatOpen;
-      if (isChatOpen) {
-          chatSidebar.classList.remove("hidden");
-          chatBadge.classList.add("hidden");
-          setTimeout(() => chatInput.focus(), 100);
-      } else {
-          chatSidebar.classList.add("hidden");
-      }
+    isChatOpen = !isChatOpen;
+    if (isChatOpen) {
+      chatSidebar.classList.remove("hidden");
+      chatBadge.classList.add("hidden");
+      setTimeout(() => chatInput.focus(), 100);
+    } else {
+      chatSidebar.classList.add("hidden");
+    }
   }
 
   function sendChatMessage() {
-      const text = chatInput.value.trim();
-      if (!text) return;
+    const text = chatInput.value.trim();
+    if (!text) return;
 
-      appendChatMessage(text, "local");
-      sendSignal({ type: "chat", text: text });
-      chatInput.value = "";
+    appendChatMessage(text, "local");
+    sendSignal({ type: "chat", text: text });
+    chatInput.value = "";
   }
 
   function appendChatMessage(text, type) {
-      const msgDiv = document.createElement("div");
-      msgDiv.classList.add("chat-message", type);
-      msgDiv.innerText = text;
-      
-      chatMessages.appendChild(msgDiv);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+    const msgDiv = document.createElement("div");
+    msgDiv.classList.add("chat-message", type);
+    msgDiv.innerText = text;
+
+    chatMessages.appendChild(msgDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
   function toggleFullscreen() {
-      const container = document.getElementById("video-screen");
-      if (!document.fullscreenElement) {
-          container.requestFullscreen().catch(err => {
-              Logger.error(`Error attempting to enable fullscreen: ${err.message} (${err.name})`);
-          });
-      } else {
-          document.exitFullscreen();
-      }
+    const container = document.getElementById("video-screen");
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch((err) => {
+        Logger.error(
+          `Error attempting to enable fullscreen: ${err.message} (${err.name})`,
+        );
+      });
+    } else {
+      document.exitFullscreen();
+    }
   }
 
   function updateFullscreenIcon() {
-      if (document.fullscreenElement) {
-          iconFullscreenEnter.classList.add("hidden");
-          iconFullscreenExit.classList.remove("hidden");
-          toggleFullscreenBtn.title = "Exit Fullscreen";
-      } else {
-          iconFullscreenEnter.classList.remove("hidden");
-          iconFullscreenExit.classList.add("hidden");
-          toggleFullscreenBtn.title = "Enter Fullscreen";
-      }
+    if (document.fullscreenElement) {
+      iconFullscreenEnter.classList.add("hidden");
+      iconFullscreenExit.classList.remove("hidden");
+      toggleFullscreenBtn.title = "Exit Fullscreen";
+    } else {
+      iconFullscreenEnter.classList.remove("hidden");
+      iconFullscreenExit.classList.add("hidden");
+      toggleFullscreenBtn.title = "Enter Fullscreen";
+    }
   }
 
   async function startCall() {
@@ -283,7 +337,9 @@ document.addEventListener("DOMContentLoaded", () => {
           Logger.warn("Could not get Audio, joining as receive-only...", aErr);
           // 3. Fallback: No Media (Receive Only)
           localStream = new MediaStream();
-          showToast("Microphone access denied/failed. Joining as receive-only.");
+          showToast(
+            "Microphone access denied/failed. Joining as receive-only.",
+          );
         }
       }
 
@@ -324,13 +380,13 @@ document.addEventListener("DOMContentLoaded", () => {
     let host = window.location.host; // Default fallback
 
     if (API_BASE_URL.startsWith("http")) {
-        // Use the configured API URL to determine host and protocol
-        const urlObj = new URL(API_BASE_URL);
-        wsProtocol = urlObj.protocol === "https:" ? "wss:" : "ws:";
-        host = urlObj.host;
+      // Use the configured API URL to determine host and protocol
+      const urlObj = new URL(API_BASE_URL);
+      wsProtocol = urlObj.protocol === "https:" ? "wss:" : "ws:";
+      host = urlObj.host;
     } else {
-        // Fallback for relative paths
-        wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      // Fallback for relative paths
+      wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     }
 
     socket = new WebSocket(
@@ -385,13 +441,13 @@ document.addEventListener("DOMContentLoaded", () => {
         // Handle Shared Volume Control
         previousMainVolume = mainVideo.volume; // Save current volume (likely 1 or user set)
         sharedVolumeContainer.classList.remove("hidden");
-        sharedVolumeSlider.value = previousMainVolume; 
-        
+        sharedVolumeSlider.value = previousMainVolume;
+
         // Move Remote Camera to Overlay
         remoteVideoOverlay.srcObject = remoteStream;
         remoteVideoOverlay.muted = false; // Ensure audio is enabled if track has it (though usually mixed)
         remoteOverlayContainer.classList.remove("hidden");
-        
+
         // Ensure overlay plays audio/video
         remoteVideoOverlay
           .play()
@@ -402,7 +458,7 @@ document.addEventListener("DOMContentLoaded", () => {
           remoteScreenStream = null;
           // Revert Main Video to Remote Camera
           mainVideo.srcObject = remoteStream;
-          
+
           // Restore Volume and Hide Control
           sharedVolumeContainer.classList.add("hidden");
           mainVideo.volume = previousMainVolume;
@@ -449,7 +505,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mainVideo.paused) {
       mainVideo.play().catch((e) => {});
     }
-    
+
     updateRemoteVideoUI();
     updateRemoteAudioUI();
   }
@@ -520,13 +576,13 @@ document.addEventListener("DOMContentLoaded", () => {
           showToast("Remote user stopped sharing screen");
         }
         break;
-        
+
       case "chat":
-          appendChatMessage(msg.text, "remote");
-          if (!isChatOpen) {
-              chatBadge.classList.remove("hidden");
-          }
-          break;
+        appendChatMessage(msg.text, "remote");
+        if (!isChatOpen) {
+          chatBadge.classList.remove("hidden");
+        }
+        break;
 
       case "user-left":
         handleUserLeft();
@@ -544,7 +600,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     remoteStream = null;
     switchToWaitingView();
-    
+
     // Clear chat
     chatMessages.innerHTML = "";
     const info = document.createElement("div");
@@ -569,14 +625,14 @@ document.addEventListener("DOMContentLoaded", () => {
     remoteOverlayContainer.style.height = "";
 
     remoteLabelContainer.classList.add("hidden");
-    
+
     if (sharedVolumeContainer) sharedVolumeContainer.classList.add("hidden");
 
     mainVideoMuteIndicator.classList.add("hidden");
     mainVideoOffIndicator.classList.add("hidden");
     remoteOverlayMuteIndicator.classList.add("hidden");
     remoteOverlayVideoOffIndicator.classList.add("hidden");
-    
+
     isRemoteVideoEnabled = true;
     isRemoteAudioEnabled = true;
 
@@ -611,7 +667,7 @@ document.addEventListener("DOMContentLoaded", () => {
       toast.classList.add("opacity-0");
       setTimeout(() => toast.remove(), 500);
     }, 3000);
-    
+
     // Also add to chat
     appendChatMessage(message, "system");
   }
@@ -662,7 +718,7 @@ document.addEventListener("DOMContentLoaded", () => {
           );
           iconVideoOn.classList.remove("hidden");
           iconVideoOff.classList.add("hidden");
-          
+
           localVideoOffIndicator.classList.add("hidden");
 
           if (remoteStream) {
@@ -676,7 +732,7 @@ document.addEventListener("DOMContentLoaded", () => {
           );
           iconVideoOn.classList.add("hidden");
           iconVideoOff.classList.remove("hidden");
-          
+
           localVideoOffIndicator.classList.remove("hidden");
         }
         sendSignal({ type: "video-status", enabled: videoTrack.enabled });
@@ -688,10 +744,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Electron Integration ---
   if (window.electronAPI) {
-      document.getElementById("title-bar").classList.remove("hidden");
-      document.getElementById("min-btn").onclick = () => window.electronAPI.minimizeWindow();
-      document.getElementById("max-btn").onclick = () => window.electronAPI.maximizeWindow();
-      document.getElementById("close-btn").onclick = () => window.electronAPI.closeWindow();
+    document.getElementById("title-bar").classList.remove("hidden");
+    document.getElementById("min-btn").onclick = () =>
+      window.electronAPI.minimizeWindow();
+    document.getElementById("max-btn").onclick = () =>
+      window.electronAPI.maximizeWindow();
+    document.getElementById("close-btn").onclick = () =>
+      window.electronAPI.closeWindow();
   }
 
   // Source Selection Elements
@@ -702,21 +761,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const fpsSelect = document.getElementById("fps-select");
 
   if (closeSourcesBtn) {
-      closeSourcesBtn.onclick = () => sourcesModal.classList.add("hidden");
+    closeSourcesBtn.onclick = () => sourcesModal.classList.add("hidden");
   }
 
   async function startScreenShare() {
     // 1. Electron: Use Custom Source Selector
     if (window.electronAPI) {
-        try {
-            const sources = await window.electronAPI.getScreenSources();
-            populateSourcesList(sources);
-            sourcesModal.classList.remove("hidden");
-        } catch (err) {
-            Logger.error("Failed to get sources from Electron:", err);
-            showToast("Failed to load screen sources.");
-        }
-        return;
+      try {
+        const sources = await window.electronAPI.getScreenSources();
+        populateSourcesList(sources);
+        sourcesModal.classList.remove("hidden");
+      } catch (err) {
+        Logger.error("Failed to get sources from Electron:", err);
+        showToast("Failed to load screen sources.");
+      }
+      return;
     }
 
     // 2. Web Browser: Standard getDisplayMedia
@@ -748,88 +807,90 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function populateSourcesList(sources) {
-      sourcesList.innerHTML = "";
-      sources.forEach(source => {
-          const div = document.createElement("div");
-          div.className = "source-item p-2 rounded flex flex-col items-center";
-          div.onclick = () => selectSource(source.id);
+    sourcesList.innerHTML = "";
+    sources.forEach((source) => {
+      const div = document.createElement("div");
+      div.className = "source-item p-2 rounded flex flex-col items-center";
+      div.onclick = () => selectSource(source.id);
 
-          const img = document.createElement("img");
-          img.src = source.thumbnail;
-          img.className = "source-thumbnail";
-          
-          const label = document.createElement("span");
-          label.className = "text-xs text-center truncate w-full";
-          label.innerText = source.name;
+      const img = document.createElement("img");
+      img.src = source.thumbnail;
+      img.className = "source-thumbnail";
 
-          div.appendChild(img);
-          div.appendChild(label);
-          sourcesList.appendChild(div);
-      });
+      const label = document.createElement("span");
+      label.className = "text-xs text-center truncate w-full";
+      label.innerText = source.name;
+
+      div.appendChild(img);
+      div.appendChild(label);
+      sourcesList.appendChild(div);
+    });
   }
 
   async function selectSource(sourceId) {
-      sourcesModal.classList.add("hidden");
-      const shareAudio = shareAudioCheck.checked;
-      const fps = parseInt(fpsSelect.value);
+    sourcesModal.classList.add("hidden");
+    const shareAudio = shareAudioCheck.checked;
+    const fps = parseInt(fpsSelect.value);
 
-      try {
-          const constraints = {
-              audio: shareAudio ? {
-                  mandatory: {
-                      chromeMediaSource: 'desktop'
-                  }
-              } : false,
-              video: {
-                  mandatory: {
-                      chromeMediaSource: 'desktop',
-                      chromeMediaSourceId: sourceId,
-                      minFrameRate: fps,
-                      maxFrameRate: fps
-                  }
-              }
-          };
+    try {
+      const constraints = {
+        audio: shareAudio
+          ? {
+              mandatory: {
+                chromeMediaSource: "desktop",
+              },
+            }
+          : false,
+        video: {
+          mandatory: {
+            chromeMediaSource: "desktop",
+            chromeMediaSourceId: sourceId,
+            minFrameRate: fps,
+            maxFrameRate: fps,
+          },
+        },
+      };
 
-          currentScreenStream = await navigator.mediaDevices.getUserMedia(constraints);
-          handleScreenStreamAcquired();
-
-      } catch (err) {
-          Logger.error("Error selecting source:", err);
-          showToast("Failed to share selected screen.");
-      }
+      currentScreenStream =
+        await navigator.mediaDevices.getUserMedia(constraints);
+      handleScreenStreamAcquired();
+    } catch (err) {
+      Logger.error("Error selecting source:", err);
+      showToast("Failed to share selected screen.");
+    }
   }
 
   function handleScreenStreamAcquired() {
-      currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
-      const screenAudioTrack = currentScreenStream.getAudioTracks()[0];
+    currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
+    const screenAudioTrack = currentScreenStream.getAudioTracks()[0];
 
+    if (screenAudioTrack) {
+      Logger.info("Screen audio track detected");
+    } else {
+      Logger.warn("No screen audio track detected");
+    }
+
+    if (peerConnection) {
+      // Add Screen Video Track
+      currentScreenSender = peerConnection.addTrack(
+        currentScreenVideoTrack,
+        currentScreenStream,
+      );
+
+      // Add Screen Audio Track separately
       if (screenAudioTrack) {
-        Logger.info("Screen audio track detected");
-      } else {
-        Logger.warn("No screen audio track detected");
-      }
-
-      if (peerConnection) {
-        // Add Screen Video Track
-        currentScreenSender = peerConnection.addTrack(
-          currentScreenVideoTrack,
+        currentScreenAudioSender = peerConnection.addTrack(
+          screenAudioTrack,
           currentScreenStream,
         );
-
-        // Add Screen Audio Track separately
-        if (screenAudioTrack) {
-            currentScreenAudioSender = peerConnection.addTrack(
-                screenAudioTrack,
-                currentScreenStream
-            );
-        }
       }
+    }
 
-      updateUIForScreenShare(true);
-      currentScreenVideoTrack.onended = () => stopScreenShare();
-      isScreenSharing = true;
-      Logger.info("Screen sharing started");
-      sendSignal({ type: "screen-share-status", isSharing: true });
+    updateUIForScreenShare(true);
+    currentScreenVideoTrack.onended = () => stopScreenShare();
+    isScreenSharing = true;
+    Logger.info("Screen sharing started");
+    sendSignal({ type: "screen-share-status", isSharing: true });
   }
 
   async function stopScreenShare() {
@@ -844,8 +905,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Remove Screen Audio Track
       if (currentScreenAudioSender) {
-          peerConnection.removeTrack(currentScreenAudioSender);
-          currentScreenAudioSender = null;
+        peerConnection.removeTrack(currentScreenAudioSender);
+        currentScreenAudioSender = null;
       }
     }
 
@@ -927,7 +988,7 @@ document.addEventListener("DOMContentLoaded", () => {
       shareScreenBtn.title = "Share Screen";
       stopShareBtn.classList.add("hidden");
     }
-    
+
     updateRemoteVideoUI();
     updateRemoteAudioUI();
   }
@@ -944,8 +1005,9 @@ document.addEventListener("DOMContentLoaded", () => {
     function dragMouseDown(e) {
       // Don't drag if we are clicking on the resize handle area (bottom right corner)
       const rect = element.getBoundingClientRect();
-      const isResizeHandle = (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20);
-      
+      const isResizeHandle =
+        e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20;
+
       if (isResizeHandle) return;
 
       e.preventDefault();
@@ -958,8 +1020,9 @@ document.addEventListener("DOMContentLoaded", () => {
     function dragTouchStart(e) {
       const touch = e.touches[0];
       const rect = element.getBoundingClientRect();
-      const isResizeHandle = (touch.clientX > rect.right - 30 && touch.clientY > rect.bottom - 30);
-      
+      const isResizeHandle =
+        touch.clientX > rect.right - 30 && touch.clientY > rect.bottom - 30;
+
       if (isResizeHandle) return;
 
       pos3 = touch.clientX;
@@ -1003,26 +1066,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function setupPIPControls() {
     const containers = [localVideoContainer, remoteOverlayContainer];
-    
-    containers.forEach(container => {
-        if (!container) return;
-        
-        const minimizeBtn = container.querySelector(".minimize-btn");
-        const restoreOverlay = container.querySelector(".restore-overlay");
-        
-        if (minimizeBtn) {
-            minimizeBtn.onclick = (e) => {
-                e.stopPropagation(); // Prevent drag triggering
-                container.classList.add("minimized");
-            };
-        }
-        
-        if (restoreOverlay) {
-            restoreOverlay.onclick = (e) => {
-                e.stopPropagation();
-                container.classList.remove("minimized");
-            };
-        }
+
+    containers.forEach((container) => {
+      if (!container) return;
+
+      const minimizeBtn = container.querySelector(".minimize-btn");
+      const restoreOverlay = container.querySelector(".restore-overlay");
+
+      if (minimizeBtn) {
+        minimizeBtn.onclick = (e) => {
+          e.stopPropagation(); // Prevent drag triggering
+          container.classList.add("minimized");
+        };
+      }
+
+      if (restoreOverlay) {
+        restoreOverlay.onclick = (e) => {
+          e.stopPropagation();
+          container.classList.remove("minimized");
+        };
+      }
     });
   }
 
@@ -1030,58 +1093,64 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!remoteStream) return;
 
     // Check where the remote stream is displayed
-    const isRemoteInMain = (mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id);
-    const isRemoteInOverlay = (remoteVideoOverlay.srcObject && remoteVideoOverlay.srcObject.id === remoteStream.id);
+    const isRemoteInMain =
+      mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id;
+    const isRemoteInOverlay =
+      remoteVideoOverlay.srcObject &&
+      remoteVideoOverlay.srcObject.id === remoteStream.id;
 
     if (isRemoteInMain) {
-        if (isRemoteVideoEnabled) {
-            mainVideoOffIndicator.classList.add("hidden");
-        } else {
-            mainVideoOffIndicator.classList.remove("hidden");
-        }
-        // Ensure overlay indicator is hidden if not there
-        remoteOverlayVideoOffIndicator.classList.add("hidden");
+      if (isRemoteVideoEnabled) {
+        mainVideoOffIndicator.classList.add("hidden");
+      } else {
+        mainVideoOffIndicator.classList.remove("hidden");
+      }
+      // Ensure overlay indicator is hidden if not there
+      remoteOverlayVideoOffIndicator.classList.add("hidden");
     } else if (isRemoteInOverlay) {
-        if (isRemoteVideoEnabled) {
-            remoteOverlayVideoOffIndicator.classList.add("hidden");
-        } else {
-            remoteOverlayVideoOffIndicator.classList.remove("hidden");
-        }
-        // Ensure main indicator is hidden if not there
-        mainVideoOffIndicator.classList.add("hidden");
-    } else {
-        // Remote stream not visible? Hide both
-        mainVideoOffIndicator.classList.add("hidden");
+      if (isRemoteVideoEnabled) {
         remoteOverlayVideoOffIndicator.classList.add("hidden");
+      } else {
+        remoteOverlayVideoOffIndicator.classList.remove("hidden");
+      }
+      // Ensure main indicator is hidden if not there
+      mainVideoOffIndicator.classList.add("hidden");
+    } else {
+      // Remote stream not visible? Hide both
+      mainVideoOffIndicator.classList.add("hidden");
+      remoteOverlayVideoOffIndicator.classList.add("hidden");
     }
   }
 
   function updateRemoteAudioUI() {
     if (!remoteStream) return;
 
-    const isRemoteInMain = (mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id);
-    const isRemoteInOverlay = (remoteVideoOverlay.srcObject && remoteVideoOverlay.srcObject.id === remoteStream.id);
+    const isRemoteInMain =
+      mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id;
+    const isRemoteInOverlay =
+      remoteVideoOverlay.srcObject &&
+      remoteVideoOverlay.srcObject.id === remoteStream.id;
 
     // Mute indicator shows when Audio is DISABLED (muted)
     const showIndicator = !isRemoteAudioEnabled;
 
     if (isRemoteInMain) {
-        if (showIndicator) {
-            mainVideoMuteIndicator.classList.remove("hidden");
-        } else {
-            mainVideoMuteIndicator.classList.add("hidden");
-        }
-        remoteOverlayMuteIndicator.classList.add("hidden");
+      if (showIndicator) {
+        mainVideoMuteIndicator.classList.remove("hidden");
+      } else {
+        mainVideoMuteIndicator.classList.add("hidden");
+      }
+      remoteOverlayMuteIndicator.classList.add("hidden");
     } else if (isRemoteInOverlay) {
-        if (showIndicator) {
-            remoteOverlayMuteIndicator.classList.remove("hidden");
-        } else {
-            remoteOverlayMuteIndicator.classList.add("hidden");
-        }
-        mainVideoMuteIndicator.classList.add("hidden");
-    } else {
-        mainVideoMuteIndicator.classList.add("hidden");
+      if (showIndicator) {
+        remoteOverlayMuteIndicator.classList.remove("hidden");
+      } else {
         remoteOverlayMuteIndicator.classList.add("hidden");
+      }
+      mainVideoMuteIndicator.classList.add("hidden");
+    } else {
+      mainVideoMuteIndicator.classList.add("hidden");
+      remoteOverlayMuteIndicator.classList.add("hidden");
     }
   }
 });

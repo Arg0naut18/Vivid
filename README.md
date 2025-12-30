@@ -1,6 +1,6 @@
 # Vivid
 
-Vivid is a secure, real-time video calling application built with **FastAPI** and **WebRTC**. It supports high-quality 1-on-1 sessions with integrated screen sharing and advanced audio mixing.
+Vivid is a secure, real-time video calling application built with **Electron**, **FastAPI** and **WebRTC**. It supports high-quality 1-on-1 sessions with integrated screen sharing and advanced audio mixing.
 
 ## ✨ Key Features
 
