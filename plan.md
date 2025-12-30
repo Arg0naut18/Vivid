@@ -1,135 +1,67 @@
 # Architecture & Implementation Documentation: Vivid
 
 ## 1. Project Overview
-**Vivid** is a secure, real-time, peer-to-peer (P2P) video calling application designed for 1-on-1 sessions. It emphasizes security, ease of use, and a modern user experience with features like screen sharing, independent audio control, picture-in-picture, and session-based chat.
+**Vivid** is a secure, real-time, peer-to-peer (P2P) video calling application designed for 1-on-1 sessions. It emphasizes security, ease of use, and a modern user experience.
 
-## 2. System Architecture
+**Current Status**: Successfully migrated to a standalone Desktop Application (Electron) with a split architecture. The backend is hosted remotely (Render), and the desktop client runs a local frontend that connects to it.
 
-### 2.1 Backend (Python / FastAPI)
-The backend acts primarily as a **Signaling Server** and **Authentication Provider**. It does *not* process media streams.
+---
 
-*   **Entry Point**: `main.py`
-    *   Initializes the `FastAPI` app.
-    *   Configures CORS middleware.
-    *   Mounts the `static/` directory for frontend assets.
-    *   Includes API routes.
-*   **Modules (`src/`)**:
-    *   **`src/api/routes.py`**:
-        *   `POST /api/join`: Handles authentication. Validates room ID and password. Returns a JWT.
-        *   `GET /api/ice-config`: Dynamic ICE server configuration (STUN/TURN), supporting Metered.ca or manual config.
-        *   `WS /ws/{room_id}`: The WebSocket signaling channel. Requires a valid JWT query parameter. Enforces a **2-person limit** per room.
-    *   **`src/services/room_manager.py`**:
-        *   Manages the state of active rooms in-memory (`rooms` dict).
-        *   Uses `asynccontextmanager` to handle the WebSocket connection lifecycle (auto-cleanup on disconnect).
-        *   Broadcasts signaling messages (SDP, ICE, User Left, Chat) to the *other* peer in the room.
-    *   **`src/auth/security.py`**:
-        *   **JWT**: Generates signed tokens with `python-jose`. Default expiry is 30 minutes.
-        *   **Hashing**: Uses `bcrypt` to securely hash room passwords.
-    *   **`src/core/config.py`**:
-        *   Manages environment variables (`SECRET_KEY`, `TURN_URL`, `TURN_API_KEY`, etc.).
+## 2. System Architecture (Current)
 
-### 2.2 Frontend (Vanilla JS / WebRTC)
-The frontend handles all media capture, P2P connection logic, and UI state.
+### 2.1 Hybrid Desktop Architecture
+*   **Frontend (Electron)**:
+    *   **Core**: Electron (Node.js + Chromium).
+    *   **UI Source**: Loads local files (`static/index.html`, `static/style.css`, `static/script.js`) directly from the user's disk. This ensures instant loading and perfect CSS rendering without CDN delays.
+    *   **Styling**: **Tailwind CSS v4** (via NPM). Styles are pre-compiled into `static/style.css`, removing the need for runtime CDN scripts and "production" warnings.
+    *   **Native Features**:
+        *   **Custom Title Bar**: Frameless window with custom Minimize/Maximize/Close controls.
+        *   **Custom Screen Selector**: Uses `desktopCapturer` API to list windows/screens with thumbnails, replacing the standard browser picker.
+        *   **Configurable Sharing**: Users can toggle System Audio and set FPS (30/60) before sharing.
+*   **Backend (Remote - Render)**:
+    *   **Technology**: Python (FastAPI).
+    *   **Role**: purely a **Signaling Server** (WebSocket) and **Authentication Provider** (JWT).
+    *   **Static Fallback**: Still mounts `static/` to serve a fallback web version for browser users.
 
-*   **Files**:
-    *   `static/index.html`: The structure (Login Form, Video Containers, Chat Sidebar, Toast, Controls). Uses Tailwind CSS.
-    *   `static/script.js`: The core logic engine.
-    *   `static/style.css`: Custom styles for animations, scrollbars, and window management.
-    *   `static/logger.js`: Custom logging utility.
+### 2.2 Data Flow
+1.  **Startup**: Electron launches -> Loads local `index.html`.
+2.  **Config**: `preload.js` injects `VIVID_API_URL` (pointing to Render) into the renderer's `window.electronAPI`.
+3.  **Connection**:
+    *   Frontend `fetch` calls go to `https://vivid-backend.onrender.com/api/...`.
+    *   WebSocket connects to `wss://vivid-backend.onrender.com/ws/...`.
+4.  **P2P**: Once signaled, media flows directly between peers (WebRTC), bypassing the server.
 
-*   **Key Logic Flows**:
-    *   **Signaling**: Connects to `/ws/{room_id}`. Listens for `announce`, `offer`, `answer`, `ice-candidate`, `mic-status`, `screen-share-status`, `user-left`, and `chat`.
-    *   **WebRTC Negotiation**:
-        *   Uses basic signaling. The first user to join (or receive an announce) acts as the offerer.
-    *   **ICE Handling**: Queues ICE candidates if the remote description hasn't been set yet.
-    *   **Screen Sharing**:
-        *   **Dual Stream Architecture**: Adds a *second* video track (`addTrack`) instead of replacing the camera track.
-        *   **Separate Audio Tracks**: System audio is captured and sent as a **separate audio track** (attached to the screen share stream) rather than being mixed with the microphone. This enables the receiver to adjust shared audio volume independently.
-        *   **UI Layout**: 
-            *   **Screen Active**: Screen share takes the Main View. Remote user's camera moves to the Picture-in-Picture overlay.
-            *   **Screen Inactive**: Remote user's camera returns to the Main View.
-    *   **Video Window Management**:
-        *   **Self-View**: Initially hidden when the user is alone. Appears as a Picture-in-Picture (PIP) only when a remote user joins.
-        *   **Picture-in-Picture (PIP)**:
-            *   **Resizable**: Both local and remote PIP windows are resizable (via CSS `resize: both`).
-            *   **Draggable**: Windows can be dragged around the screen (drag logic excludes resize handle).
-            *   **Minimizable**: Windows have a header (visible on hover) with a "Minimize" button. Minimizing shrinks the window to a small icon; clicking it restores the view.
-            *   **Auto-Reset**: Windows reset to default state/position when session ends.
-    *   **Fullscreen Experience**:
-        *   **Smart Controls**: In fullscreen mode, the controls bar slides down and disappears to provide an unobstructed view. 
-        *   **Bottom-Hover Trigger**: Controls reappear automatically when the mouse is hovered at the bottom of the screen (bottom 128px), using an invisible hover sensor.
+### 2.3 Key Implementation Details
+*   **Screen Sharing**:
+    *   **Electron**: Calls `window.electronAPI.getScreenSources()` -> Main Process returns sources -> User selects -> `navigator.mediaDevices.getUserMedia` with `chromeMediaSourceId`.
+    *   **Web Fallback**: Uses standard `navigator.mediaDevices.getDisplayMedia`.
+*   **Window Management**: IPC messages (`window-control`) handle frameless window operations.
 
-## 3. Data Flow
+---
 
-### 3.1 Authentication
-1.  User enters Room ID + Password.
-2.  `POST /api/join` -> Backend checks room existence/limits.
-3.  Frontend receives `access_token`.
+## 3. Next Steps & Roadmap
 
-### 3.2 Connection (Signaling)
-1.  Frontend connects to `wss://.../ws/{room_id}?token={jwt}`.
-2.  Backend validates JWT.
-3.  **New User** sends `announce`.
-4.  **Existing User** receives `announce`, creates `Offer`.
-5.  **New User** receives `Offer`, sends `Answer`.
-6.  **P2P Established**: Media flows directly.
+### 3.1 Immediate Tasks (Distribution)
+- [ ] **Build Installer**: Run `npm run dist` to generate the `.exe` installer.
+- [ ] **Release**: Share the installer via GitHub Releases or a simple download page.
+- [ ] **Web Deployment**: Commit and push the generated `static/style.css` to Render to fix the web version's styling.
 
-### 3.3 User Disconnection
-*   **Detection**: Backend detects `WebSocketDisconnect`.
-*   **Broadcast**: Server sends `{"type": "user-left"}`.
-*   **Frontend Action**:
-    *   Closes `RTCPeerConnection`.
-    *   Resets UI to "Waiting" state (Local PIP hidden, Chat cleared, Main view mirrors local cam).
-    *   Displays Toast.
+### 3.2 Enhancements (Planned)
+- [ ] **Auto-Updates**: Configure `electron-updater` to pull new versions from GitHub Releases automatically.
+- [ ] **Noise Cancellation**: Integrate a native Node.js module (like `krisp` SDK or similar WebRTC enhancements) for superior audio processing.
+- [ ] **System Tray**: Add a tray icon to keep the app running in the background or for quick mute toggles.
+- [ ] **Global Hotkeys**: Implement system-wide shortcuts (e.g., `Ctrl+Shift+M` to mute) that work even when the app is minimized.
 
-## 4. Security Model
+### 3.3 Known Issues / Optimizations
+-   **First Load**: The remote backend might spin down on free tiers (Render). The frontend handles connection retries, but a "Waking up server..." spinner would be better UX.
+-   **Security**: Ensure `nodeIntegration` remains false. Review `preload.js` to ensure only strictly necessary APIs are exposed.
 
-*   **Transport Security**: HTTPS/WSS required.
-*   **Access Control**: Room Passwords + 2-Person Limit.
-*   **Data Privacy**: End-to-End Encryption (WebRTC). Ephemeral Rooms (In-Memory). Chat history is not stored on server.
+## 4. Development Workflow
 
-## 5. Deployment & Configuration
+### 4.1 Running Locally
+*   **Desktop**: `npm start` (Runs Electron with local frontend + remote backend).
+*   **CSS Watch**: `npm run build:css` (Watches for Tailwind changes).
 
-*   **Platform**: Render (Python Web Service).
-*   **Build Command**: `pip install -r requirements.txt` (or using `uv`).
-*   **Start Command**: `gunicorn -c gunicorn_conf.py main:app`
-*   **Environment Variables**: `SECRET_KEY`, `TURN_URL`, `TURN_API_KEY`, `TURN_USERNAME`, `TURN_PASSWORD`, `ENVIRONMENT`.
-
-## 6. Known Limitations
-*   **Persistence**: Room passwords lost on restart.
-*   **Firefox/Zen Browser**: System audio sharing limitation on Windows.
-*   **Mobile Screen Share**: Browser restrictions apply.
-
-## 7. Session Chat
-
-### 7.1 Overview
-A real-time text chat feature residing in a toggleable sidebar on the right side.
-
-### 7.2 Requirements & Implementation
-*   **Toggleable UI**: Can be hidden/shown via a button in the controls bar. Includes an unread message badge.
-*   **Fullscreen Support**: Chat Sidebar is moved inside the `#video-screen` container to remain accessible in Fullscreen mode.
-*   **Session Persistence Only**: Messages exist only in browser memory.
-*   **Auto-Clear**: Chat history clears on session end/user left.
-*   **System Integration**: Toast notifications (e.g., "User joined") are mirrored as system messages in the chat log.
-
-## 8. Shared Audio Volume Control
-
-### 8.1 Implementation
-*   **Dynamic UI**: A volume button appears in the controls bar **only** when a remote screen share (with audio) is detected.
-*   **Vertical Slider**: Hovering over the volume button reveals a vertical slider above it for fine-tuned adjustment.
-*   **Independent Volume**: Modifies the `volume` property of the `mainVideo` element. Since screen audio is sent as a separate track on the screen-share stream, this slider adjusts the share volume without affecting the remote user's microphone volume (which is played via the PIP overlay).
-*   **UX Bridge**: An invisible container bridge ensures the slider doesn't close when moving the mouse between the button and the slider popup.
-
-## 9. Video & Audio Status Indicators
-
-### 9.1 Overview
-Visual feedback for media states (Camera On/Off, Mute/Unmute) is crucial for user confidence. This system ensures indicators are consistent for both local self-view and remote peer view.
-
-### 9.2 Implementation
-*   **Camera Off Placeholders**:
-    *   **Local**: When the user disables their camera, the local PIP displays a "Camera Off" icon.
-    *   **Remote**: When the remote peer disables their camera, the recipient sees a "Camera Off" placeholder in the appropriate container (Main View or PIP Overlay).
-    *   **Signaling**: A dedicated `video-status` signal is sent via WebSocket to trigger the remote UI update.
-*   **Mute Indicators**:
-    *   **Context-Aware**: Red microphone icons appear on the video feed of the user who is muted.
-    *   **Sync Logic**: The `mic-status` signal ensures that if the remote user mutes, the icon appears on their video stream, regardless of whether it is currently in the Main View (default) or the PIP Overlay (during screen share).
+### 4.2 Building for Production
+*   **Desktop**: `npm run dist` (Creates `dist/Vivid Setup 1.0.0.exe`).
+*   **Web**: `git push` (Deploys Python backend + Static assets to Render).

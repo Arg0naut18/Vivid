@@ -94,8 +94,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let isChatOpen = false;
 
+  // --- API Configuration ---
+  let API_BASE_URL = window.location.origin;
+  if (window.electronAPI && window.electronAPI.config && window.electronAPI.config.apiUrl) {
+      API_BASE_URL = window.electronAPI.config.apiUrl.replace(/\/$/, "");
+  }
+
   // Fetch Client Config (Logging, etc.)
-  fetch("/api/config")
+  fetch(`${API_BASE_URL}/api/config`)
     .then((res) => res.json())
     .then((config) => {
       if (config.is_production) {
@@ -125,7 +131,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       try {
-        const iceResp = await fetch("/api/ice-config");
+        const iceResp = await fetch(`${API_BASE_URL}/api/ice-config`);
         if (iceResp.ok) {
           const fetchedConfig = await iceResp.json();
           if (fetchedConfig.iceServers) {
@@ -148,7 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
 
-        const response = await fetch("/api/join", {
+        const response = await fetch(`${API_BASE_URL}/api/join`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ room_id: roomId, password: password }),
@@ -313,9 +319,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function connectSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // Determine WS Protocol based on API_BASE_URL
+    let wsProtocol = "ws:";
+    let host = window.location.host; // Default fallback
+
+    if (API_BASE_URL.startsWith("http")) {
+        // Use the configured API URL to determine host and protocol
+        const urlObj = new URL(API_BASE_URL);
+        wsProtocol = urlObj.protocol === "https:" ? "wss:" : "ws:";
+        host = urlObj.host;
+    } else {
+        // Fallback for relative paths
+        wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    }
+
     socket = new WebSocket(
-      `${protocol}//${window.location.host}/ws/${roomId}?token=${authToken}`,
+      `${wsProtocol}//${host}/ws/${roomId}?token=${authToken}`,
     );
 
     socket.onopen = () => {
@@ -667,9 +686,41 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  async function startScreenShare() {
-    // Detect Firefox/Gecko
+  // --- Electron Integration ---
+  if (window.electronAPI) {
+      document.getElementById("title-bar").classList.remove("hidden");
+      document.getElementById("min-btn").onclick = () => window.electronAPI.minimizeWindow();
+      document.getElementById("max-btn").onclick = () => window.electronAPI.maximizeWindow();
+      document.getElementById("close-btn").onclick = () => window.electronAPI.closeWindow();
+  }
 
+  // Source Selection Elements
+  const sourcesModal = document.getElementById("sources-modal");
+  const closeSourcesBtn = document.getElementById("close-sources-btn");
+  const sourcesList = document.getElementById("sources-list");
+  const shareAudioCheck = document.getElementById("share-audio-check");
+  const fpsSelect = document.getElementById("fps-select");
+
+  if (closeSourcesBtn) {
+      closeSourcesBtn.onclick = () => sourcesModal.classList.add("hidden");
+  }
+
+  async function startScreenShare() {
+    // 1. Electron: Use Custom Source Selector
+    if (window.electronAPI) {
+        try {
+            const sources = await window.electronAPI.getScreenSources();
+            populateSourcesList(sources);
+            sourcesModal.classList.remove("hidden");
+        } catch (err) {
+            Logger.error("Failed to get sources from Electron:", err);
+            showToast("Failed to load screen sources.");
+        }
+        return;
+    }
+
+    // 2. Web Browser: Standard getDisplayMedia
+    // Detect Firefox/Gecko
     const isFirefox = navigator.userAgent.toLowerCase().indexOf("firefox") > -1;
 
     if (isFirefox) {
@@ -679,54 +730,98 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      Logger.info("Requesting screen share...");
-
-      // Use more standard constraints. Chrome handles system audio best with echoCancellation disabled.
+      Logger.info("Requesting screen share (Web)...");
 
       currentScreenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          cursor: "always",
-        },
-
+        video: { cursor: "always" },
         audio: {
           echoCancellation: false,
-
           noiseSuppression: false,
-
           autoGainControl: false,
         },
       });
 
-      currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
+      handleScreenStreamAcquired();
+    } catch (err) {
+      Logger.error("Error starting screen share:", err);
+    }
+  }
 
+  function populateSourcesList(sources) {
+      sourcesList.innerHTML = "";
+      sources.forEach(source => {
+          const div = document.createElement("div");
+          div.className = "source-item p-2 rounded flex flex-col items-center";
+          div.onclick = () => selectSource(source.id);
+
+          const img = document.createElement("img");
+          img.src = source.thumbnail;
+          img.className = "source-thumbnail";
+          
+          const label = document.createElement("span");
+          label.className = "text-xs text-center truncate w-full";
+          label.innerText = source.name;
+
+          div.appendChild(img);
+          div.appendChild(label);
+          sourcesList.appendChild(div);
+      });
+  }
+
+  async function selectSource(sourceId) {
+      sourcesModal.classList.add("hidden");
+      const shareAudio = shareAudioCheck.checked;
+      const fps = parseInt(fpsSelect.value);
+
+      try {
+          const constraints = {
+              audio: shareAudio ? {
+                  mandatory: {
+                      chromeMediaSource: 'desktop'
+                  }
+              } : false,
+              video: {
+                  mandatory: {
+                      chromeMediaSource: 'desktop',
+                      chromeMediaSourceId: sourceId,
+                      minFrameRate: fps,
+                      maxFrameRate: fps
+                  }
+              }
+          };
+
+          currentScreenStream = await navigator.mediaDevices.getUserMedia(constraints);
+          handleScreenStreamAcquired();
+
+      } catch (err) {
+          Logger.error("Error selecting source:", err);
+          showToast("Failed to share selected screen.");
+      }
+  }
+
+  function handleScreenStreamAcquired() {
+      currentScreenVideoTrack = currentScreenStream.getVideoTracks()[0];
       const screenAudioTrack = currentScreenStream.getAudioTracks()[0];
 
       if (screenAudioTrack) {
         Logger.info("Screen audio track detected");
       } else {
         Logger.warn("No screen audio track detected");
-
-        if (!isFirefox) {
-          showToast(
-            "System audio not captured. Did you check 'Share system audio'?",
-          );
-        }
       }
 
       if (peerConnection) {
-        // Add Screen Video Track (send as a separate stream)
+        // Add Screen Video Track
         currentScreenSender = peerConnection.addTrack(
           currentScreenVideoTrack,
           currentScreenStream,
         );
 
-        // Add Screen Audio Track (if available) to the SAME stream
+        // Add Screen Audio Track separately
         if (screenAudioTrack) {
             currentScreenAudioSender = peerConnection.addTrack(
                 screenAudioTrack,
                 currentScreenStream
             );
-            Logger.info("Added screen audio track separately");
         }
       }
 
@@ -735,9 +830,6 @@ document.addEventListener("DOMContentLoaded", () => {
       isScreenSharing = true;
       Logger.info("Screen sharing started");
       sendSignal({ type: "screen-share-status", isSharing: true });
-    } catch (err) {
-      Logger.error("Error starting screen share:", err);
-    }
   }
 
   async function stopScreenShare() {

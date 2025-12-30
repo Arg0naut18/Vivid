@@ -8,13 +8,56 @@
         />
         <meta
             http-equiv="Content-Security-Policy"
-            content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:;"
+            content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *; style-src 'self' 'unsafe-inline' *; img-src 'self' data:; media-src 'self' blob:; connect-src * ws: wss:;"
         />
         <title>Vivid - Video Call</title>
-        <script src="https://cdn.tailwindcss.com"></script>
         <link rel="stylesheet" href="style.css" />
     </head>
     <body class="bg-gray-900 text-white h-screen flex flex-col">
+        <!-- Custom Title Bar (Electron Only) -->
+        <div
+            id="title-bar"
+            class="hidden h-8 bg-gray-900 flex justify-between items-center select-none w-full border-b border-gray-800"
+        >
+            <div class="drag-region flex-1 h-full flex items-center pl-4 -mt-1">
+                <span class="text-xs font-bold text-gray-400">VIVID</span>
+            </div>
+            <div class="flex h-full">
+                <button
+                    id="min-btn"
+                    class="w-12 h-full hover:bg-gray-700 flex items-center justify-center text-gray-400"
+                >
+                    <svg width="10" height="1" viewBox="0 0 10 1">
+                        <path d="M0 0h10v1H0z" fill="currentColor" />
+                    </svg>
+                </button>
+                <button
+                    id="max-btn"
+                    class="w-12 h-full hover:bg-gray-700 flex items-center justify-center text-gray-400"
+                >
+                    <svg width="10" height="10" viewBox="0 0 10 10">
+                        <path
+                            d="M1 1h8v8H1z"
+                            fill="none"
+                            stroke="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    id="close-btn"
+                    class="w-12 h-full hover:bg-red-600 hover:text-white flex items-center justify-center text-gray-400"
+                >
+                    <svg width="10" height="10" viewBox="0 0 10 10">
+                        <path
+                            d="M1 1l8 8m0-8l-8 8"
+                            stroke="currentColor"
+                            stroke-width="1.2"
+                        />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
         <header class="p-4 bg-gray-800 flex justify-between items-center">
             <h1 class="text-2xl font-bold text-blue-400">Vivid</h1>
             <div id="room-info" class="hidden">
@@ -126,9 +169,25 @@
                         id="main-video-off-indicator"
                         class="hidden absolute inset-0 flex flex-col items-center justify-center bg-gray-900 text-gray-500 z-0"
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-24 w-24 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M15 10l4.553-2.276A1 1 0 0121 8.818v6.364a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M3 3l18 18" />
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            class="h-24 w-24 mb-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="1"
+                                d="M15 10l4.553-2.276A1 1 0 0121 8.818v6.364a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                            />
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="1"
+                                d="M3 3l18 18"
+                            />
                         </svg>
                         <span class="text-xl">Camera Off</span>
                     </div>
@@ -156,18 +215,52 @@
                         class="group absolute bottom-4 right-4 w-48 h-36 bg-gray-800 rounded-lg overflow-hidden border-2 border-blue-500 shadow-2xl cursor-move z-20 transition-all duration-300"
                     >
                         <!-- PIP Header (Visible on hover) -->
-                        <div class="pip-header absolute top-0 left-0 w-full p-1 z-20 flex justify-end space-x-1 bg-gradient-to-b from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button class="minimize-btn text-white hover:text-blue-400 p-1 bg-black/20 rounded" title="Minimize">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" /></svg>
+                        <div
+                            class="pip-header absolute top-0 left-0 w-full p-1 z-20 flex justify-end space-x-1 bg-gradient-to-b from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                            <button
+                                class="minimize-btn text-white hover:text-blue-400 p-1 bg-black/20 rounded"
+                                title="Minimize"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    class="h-4 w-4"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                >
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M20 12H4"
+                                    />
+                                </svg>
                             </button>
                         </div>
 
                         <!-- Restore Overlay (Visible when minimized) -->
-                        <div class="restore-overlay hidden absolute inset-0 z-30 flex flex-col items-center justify-center bg-gray-800 cursor-pointer">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-blue-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                        <div
+                            class="restore-overlay hidden absolute inset-0 z-30 flex flex-col items-center justify-center bg-gray-800 cursor-pointer"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-8 w-8 text-blue-500 mb-1"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                                />
                             </svg>
-                            <span class="text-[10px] text-gray-400 text-center leading-tight">Click to<br>Restore</span>
+                            <span
+                                class="text-[10px] text-gray-400 text-center leading-tight"
+                                >Click to<br />Restore</span
+                            >
                         </div>
 
                         <!-- Local Video Off Indicator -->
@@ -175,8 +268,19 @@
                             id="local-video-off-indicator"
                             class="hidden absolute inset-0 flex items-center justify-center bg-gray-900 text-gray-500 z-10"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-10 w-10"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
                             </svg>
                         </div>
 
@@ -222,24 +326,57 @@
                     </div>
 
                     <!-- Remote Video Overlay (For when sharing screen) -->
-                                        <div
-                                            id="remote-overlay-container"
-                                            class="group hidden absolute top-4 right-4 w-48 h-36 bg-gray-800 rounded-lg overflow-hidden border-2 border-green-500 shadow-2xl cursor-move z-20 transition-all duration-300"
-                                        >
-                                             <!-- PIP Header (Visible on hover) -->
-                                            <div class="pip-header absolute top-0 left-0 w-full p-1 z-20 flex justify-end space-x-1 bg-gradient-to-b from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                    
-                            <button class="minimize-btn text-white hover:text-green-400 p-1 bg-black/20 rounded" title="Minimize">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" /></svg>
+                    <div
+                        id="remote-overlay-container"
+                        class="group hidden absolute top-4 right-4 w-48 h-36 bg-gray-800 rounded-lg overflow-hidden border-2 border-green-500 shadow-2xl cursor-move z-20 transition-all duration-300"
+                    >
+                        <!-- PIP Header (Visible on hover) -->
+                        <div
+                            class="pip-header absolute top-0 left-0 w-full p-1 z-20 flex justify-end space-x-1 bg-gradient-to-b from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                            <button
+                                class="minimize-btn text-white hover:text-green-400 p-1 bg-black/20 rounded"
+                                title="Minimize"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    class="h-4 w-4"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                >
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M20 12H4"
+                                    />
+                                </svg>
                             </button>
                         </div>
 
                         <!-- Restore Overlay (Visible when minimized) -->
-                        <div class="restore-overlay hidden absolute inset-0 z-30 flex flex-col items-center justify-center bg-gray-800 cursor-pointer">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-green-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                        <div
+                            class="restore-overlay hidden absolute inset-0 z-30 flex flex-col items-center justify-center bg-gray-800 cursor-pointer"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-8 w-8 text-green-500 mb-1"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                                />
                             </svg>
-                            <span class="text-[10px] text-gray-400 text-center leading-tight">Click to<br>Restore</span>
+                            <span
+                                class="text-[10px] text-gray-400 text-center leading-tight"
+                                >Click to<br />Restore</span
+                            >
                         </div>
 
                         <!-- Remote Overlay Video Off Indicator -->
@@ -247,8 +384,19 @@
                             id="remote-overlay-video-off-indicator"
                             class="hidden absolute inset-0 flex items-center justify-center bg-gray-900 text-gray-500 z-10"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-10 w-10"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
                             </svg>
                         </div>
 
@@ -371,7 +519,10 @@
                 </div>
 
                 <!-- Fullscreen Hover Trigger (Invisible) -->
-                <div id="fullscreen-hover-trigger" class="hidden absolute bottom-0 left-0 w-full h-32 z-40"></div>
+                <div
+                    id="fullscreen-hover-trigger"
+                    class="hidden absolute bottom-0 left-0 w-full h-32 z-40"
+                ></div>
 
                 <!-- Controls -->
                 <div
@@ -536,10 +687,17 @@
                     <div class="h-8 w-px bg-gray-600 mx-2"></div>
 
                     <!-- Shared Volume Control (Visible when viewing screen share) -->
-                    <div id="shared-volume-container" class="relative hidden group">
+                    <div
+                        id="shared-volume-container"
+                        class="relative hidden group"
+                    >
                         <!-- Slider Popup (Vertical) -->
-                        <div class="absolute bottom-full left-1/2 transform -translate-x-1/2 hidden group-hover:flex flex-col items-center pb-4">
-                            <div class="bg-gray-800 p-3 rounded-lg shadow-xl border border-gray-700">
+                        <div
+                            class="absolute bottom-full left-1/2 transform -translate-x-1/2 hidden group-hover:flex flex-col items-center pb-4"
+                        >
+                            <div
+                                class="bg-gray-800 p-3 rounded-lg shadow-xl border border-gray-700"
+                            >
                                 <input
                                     type="range"
                                     id="shared-volume-slider"
@@ -548,19 +706,30 @@
                                     step="0.05"
                                     value="1"
                                     class="h-24 w-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500 vertical-slider"
-                                    orient="vertical" 
+                                    orient="vertical"
                                 />
                             </div>
                         </div>
-                        
+
                         <!-- Volume Icon Button -->
                         <button
                             id="shared-volume-btn"
                             title="Shared Audio Volume"
                             class="bg-gray-700 hover:bg-gray-600 text-white w-12 h-12 rounded-full font-semibold flex items-center justify-center transition"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-6 w-6"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+                                />
                             </svg>
                         </button>
                     </div>
@@ -599,14 +768,14 @@
                                 stroke-linecap="round"
                                 stroke-linejoin="round"
                                 stroke-width="2"
-                                d="M6 18L18 6M6 6l12 12" 
+                                d="M6 18L18 6M6 6l12 12"
                             />
                             <!-- Better Exit Icon: Arrows pointing in -->
                             <path
                                 stroke-linecap="round"
                                 stroke-linejoin="round"
                                 stroke-width="2"
-                                d="M4 14h6m0 0v6m0-6L4 20m16-6h-6m0 0v6m0-6l6 6M4 10h6m0 0V4m0 6L4 4m16 6h-6m0 0V4m0 6l6-6" 
+                                d="M4 14h6m0 0v6m0-6L4 20m16-6h-6m0 0v6m0-6l6 6M4 10h6m0 0V4m0 6L4 4m16 6h-6m0 0V4m0 6l6-6"
                             />
                         </svg>
                     </button>
@@ -634,6 +803,80 @@
                 </div>
             </div>
         </main>
+
+        <!-- Sources Modal (Electron Only) -->
+        <div
+            id="sources-modal"
+            class="hidden fixed inset-0 z-[60] bg-black bg-opacity-80 flex items-center justify-center"
+        >
+            <div
+                class="bg-gray-800 rounded-lg shadow-2xl w-3/4 max-w-4xl max-h-[80vh] flex flex-col"
+            >
+                <div
+                    class="p-4 border-b border-gray-700 flex justify-between items-center"
+                >
+                    <h2 class="text-xl font-bold">Share Screen</h2>
+                    <button
+                        id="close-sources-btn"
+                        class="text-gray-400 hover:text-white"
+                    >
+                        <svg
+                            class="w-6 h-6"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12"
+                            ></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="p-4 flex-1 overflow-y-auto">
+                    <div
+                        id="sources-list"
+                        class="grid grid-cols-2 md:grid-cols-3 gap-4"
+                    >
+                        <!-- Source Items Injected Here -->
+                    </div>
+                </div>
+
+                <div
+                    class="p-4 border-t border-gray-700 flex items-center justify-between bg-gray-900"
+                >
+                    <div class="flex items-center space-x-4">
+                        <label
+                            class="flex items-center space-x-2 cursor-pointer"
+                        >
+                            <input
+                                type="checkbox"
+                                id="share-audio-check"
+                                class="form-checkbox text-blue-600 rounded bg-gray-700 border-gray-600"
+                            />
+                            <span class="text-sm">Share Audio</span>
+                        </label>
+
+                        <div class="flex items-center space-x-2">
+                            <span class="text-sm text-gray-400">FPS:</span>
+                            <select
+                                id="fps-select"
+                                class="bg-gray-700 text-white text-sm rounded border border-gray-600 focus:outline-none p-1"
+                            >
+                                <option value="30">30</option>
+                                <option value="60">60</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500 italic">
+                        Select a source to start sharing
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <script src="logger.js"></script>
         <script src="script.js"></script>

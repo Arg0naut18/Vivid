@@ -1,0 +1,37 @@
+{
+  "name": "vivid-desktop",
+  "version": "1.0.0",
+  "description": "Vivid P2P Video Calling - Desktop App",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:css": "npx tailwindcss -i ./src/input.css -o ./static/style.css --watch",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "author": "Vivid",
+  "license": "MIT",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.18",
+    "autoprefixer": "^10.4.23",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18"
+  },
+  "build": {
+    "appId": "com.vivid.app",
+    "productName": "Vivid",
+    "files": [
+      "electron/**/*",
+      "static/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
