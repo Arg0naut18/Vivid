@@ -17,17 +17,18 @@ const store = new Store({
   defaults: {
     windowBounds: { width: 1280, height: 720 },
     pipBounds: null,
-    isMaximized: false
+    isMaximized: false,
   },
 });
 
 let mainWindow;
 
-const REMOTE_SERVER_URL = "https://vivid-wvh4.onrender.com/";
+const REMOTE_SERVER_URL =
+  "https://unchauvinistic-supergloriously-adalberto.ngrok-free.dev/";
 
 // --- PiP State ---
 let isPipMode = false;
-let wasMaximized = false; 
+let wasMaximized = false;
 
 // --- Window Management ---
 
@@ -49,7 +50,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
-      backgroundThrottling: false, 
+      backgroundThrottling: false,
     },
     autoHideMenuBar: true,
     show: false, // Hide initially to prevent flash if maximizing
@@ -77,7 +78,11 @@ function createWindow() {
   const saveState = () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
-      if (!isPipMode && !mainWindow.isMaximized() && !mainWindow.isMinimized()) {
+      if (
+        !isPipMode &&
+        !mainWindow.isMaximized() &&
+        !mainWindow.isMinimized()
+      ) {
         store.set("windowBounds", mainWindow.getBounds());
       }
       if (!isPipMode) {
@@ -124,7 +129,7 @@ app.on("window-all-closed", () => {
 // --- IPC Handlers (Native Features) ---
 
 ipcMain.on("open-audio-guide", () => {
-    shell.openExternal("https://vb-audio.com/Cable/");
+  shell.openExternal("https://vb-audio.com/Cable/");
 });
 
 ipcMain.handle("get-sources", async () => {
@@ -153,10 +158,10 @@ ipcMain.on("toggle-pip", (event, enable) => {
     // We rely on the Store having the last known "Good" state (saved during resize/move events)
     // But we also check immediate state:
     wasMaximized = mainWindow.isMaximized();
-    
+
     // CRITICAL: We must unmaximize to allow resizing to PiP size
     if (wasMaximized) {
-      mainWindow.unmaximize(); 
+      mainWindow.unmaximize();
     }
 
     // 2. Determine PiP Target Bounds
@@ -181,34 +186,33 @@ ipcMain.on("toggle-pip", (event, enable) => {
     // 3. Apply PiP settings
     isPipMode = true;
     mainWindow.setMinimumSize(160, 90);
-    
+
     // Ensure window is restored (visible) if it was minimized
     if (mainWindow.isMinimized()) mainWindow.restore();
-    
+
     mainWindow.setBounds(targetBounds);
     mainWindow.setAlwaysOnTop(true, "screen-saver");
     mainWindow.webContents.send("pip-mode-changed", true);
 
     // Save PiP bounds when user moves/resizes IT
-    // We add a specific listener for PiP mode? 
-    // Actually, our global 'resize' listener handles saving. 
+    // We add a specific listener for PiP mode?
+    // Actually, our global 'resize' listener handles saving.
     // We just need to update logic in saveState to check isPipMode.
-    
+
     // Setup temporary listener for PiP persistence
     const savePipState = () => {
-       if (isPipMode && !mainWindow.isMinimized()) {
-           store.set("pipBounds", mainWindow.getBounds());
-       }
+      if (isPipMode && !mainWindow.isMinimized()) {
+        store.set("pipBounds", mainWindow.getBounds());
+      }
     };
-    mainWindow.on('resize', savePipState);
-    mainWindow.on('move', savePipState);
-    
+    mainWindow.on("resize", savePipState);
+    mainWindow.on("move", savePipState);
+
     // Cleanup helper
     mainWindow.pipCleanup = () => {
-        mainWindow.removeListener('resize', savePipState);
-        mainWindow.removeListener('move', savePipState);
+      mainWindow.removeListener("resize", savePipState);
+      mainWindow.removeListener("move", savePipState);
     };
-
   } else {
     if (!isPipMode) return; // Not in PiP
 
@@ -218,7 +222,7 @@ ipcMain.on("toggle-pip", (event, enable) => {
     // Restore
     isPipMode = false;
     mainWindow.setAlwaysOnTop(false);
-    
+
     // Restore size constraints
     mainWindow.setMinimumSize(900, 600);
 
@@ -227,14 +231,14 @@ ipcMain.on("toggle-pip", (event, enable) => {
     const shouldMaximize = store.get("isMaximized") || wasMaximized;
 
     if (shouldMaximize) {
-        mainWindow.maximize();
+      mainWindow.maximize();
     } else if (normalBounds) {
-        mainWindow.setBounds(normalBounds);
+      mainWindow.setBounds(normalBounds);
     } else {
-        mainWindow.setSize(1280, 720);
-        mainWindow.center();
+      mainWindow.setSize(1280, 720);
+      mainWindow.center();
     }
-    
+
     mainWindow.webContents.send("pip-mode-changed", false);
   }
 });
