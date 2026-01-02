@@ -72,6 +72,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const localLabel = document.getElementById("local-label");
   const remoteLabel = document.getElementById("remote-label");
+  const remoteOverlayLabel = document.getElementById("remote-overlay-label");
   const remoteLabelContainer = document.getElementById(
     "remote-label-container",
   );
@@ -89,6 +90,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const toggleVideoBtn = document.getElementById("toggle-video");
   const toggleFullscreenBtn = document.getElementById("toggle-fullscreen");
 
+  const micMenuBtn = document.getElementById("mic-menu-btn");
+  const micMenu = document.getElementById("mic-menu");
+  const micListContainer = document.getElementById("mic-list");
+  const speakerListContainer = document.getElementById("speaker-list");
+
   const iconMicOn = document.getElementById("icon-mic-on");
   const iconMicOff = document.getElementById("icon-mic-off");
   const iconVideoOn = document.getElementById("icon-video-on");
@@ -105,7 +111,224 @@ document.addEventListener("DOMContentLoaded", () => {
   const toggleChatBtn = document.getElementById("toggle-chat");
   const chatBadge = document.getElementById("chat-badge");
 
+  // Toggle Popover
+  if (micMenuBtn) {
+    micMenuBtn.onclick = (e) => {
+      e.stopPropagation();
+      micMenu.classList.toggle("hidden");
+    };
+  }
+
+  // Close popover on click outside
+  document.addEventListener("click", (e) => {
+    if (
+      micMenu &&
+      micMenuBtn &&
+      !micMenu.contains(e.target) &&
+      !micMenuBtn.contains(e.target)
+    ) {
+      micMenu.classList.add("hidden");
+    }
+  });
+
+  async function switchMicrophone(deviceId) {
+    Logger.info("Switching microphone to:", deviceId);
+    try {
+      const constraints = {
+        audio: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      };
+
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const newAudioTrack = newStream.getAudioTracks()[0];
+
+      if (localStream) {
+        const oldTrack = localStream.getAudioTracks()[0];
+        if (oldTrack) oldTrack.stop();
+        localStream.removeTrack(oldTrack);
+        localStream.addTrack(newAudioTrack);
+      }
+
+      // Replace track in PeerConnection
+      if (peerConnection) {
+        const sender = peerConnection
+          .getSenders()
+          .find((s) => s.track && s.track.kind === "audio");
+        if (sender) {
+          await sender.replaceTrack(newAudioTrack);
+        } else {
+          // If no audio sender existed, add one (renegotiation needed)
+          peerConnection.addTrack(newAudioTrack, localStream);
+        }
+      }
+
+      Logger.success("Microphone switched successfully");
+    } catch (e) {
+      Logger.error("Failed to switch microphone", e);
+      showToast("Failed to switch microphone");
+    }
+  }
+
   let isChatOpen = false;
+  let selectedAudioInputId = "";
+  let selectedAudioOutputId = "";
+
+  // --- Audio Output Management ---
+  const audioInputSelect = document.getElementById("audio-input-select");
+  const audioOutputSelect = document.getElementById("audio-output-select");
+
+  async function loadAudioDevices() {
+    try {
+      // Prompt for permission first to get labels
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      const devices = await navigator.mediaDevices.enumerateDevices();
+
+      const inputs = devices.filter((d) => d.kind === "audioinput");
+      const outputs = devices.filter((d) => d.kind === "audiooutput");
+
+      // Populate Join Screen Selects
+      if (audioInputSelect) {
+        audioInputSelect.innerHTML = '<option value="">System Default</option>';
+        inputs.forEach((d) => {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.text = d.label || `Mic ${d.deviceId.slice(0, 5)}`;
+          audioInputSelect.appendChild(opt);
+        });
+      }
+      if (audioOutputSelect) {
+        audioOutputSelect.innerHTML = '<option value="">System Default</option>';
+        outputs.forEach((d) => {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.text = d.label || `Speaker ${d.deviceId.slice(0, 5)}`;
+          audioOutputSelect.appendChild(opt);
+        });
+      }
+
+      // Populate Popover Menus
+      const populateMenu = (container, list, type, currentId, onSelect) => {
+        if (!container) return;
+        container.innerHTML = "";
+
+        // Add Default Option
+        const defaultItem = document.createElement("div");
+        defaultItem.className =
+          "px-4 py-2 hover:bg-gray-700 cursor-pointer text-sm truncate flex justify-between items-center";
+        defaultItem.innerText = "System Default";
+        if (currentId === "")
+          defaultItem.classList.add("text-blue-400", "font-bold");
+        defaultItem.onclick = (e) => {
+          e.stopPropagation();
+          onSelect("");
+          loadAudioDevices(); // Refresh highlight
+        };
+        container.appendChild(defaultItem);
+
+        list.forEach((d) => {
+          const item = document.createElement("div");
+          item.className =
+            "px-4 py-2 hover:bg-gray-700 cursor-pointer text-sm truncate flex justify-between items-center";
+          item.innerText = d.label || `${type} ${d.deviceId.slice(0, 5)}`;
+          if (currentId === d.deviceId)
+            item.classList.add("text-blue-400", "font-bold");
+
+          item.onclick = (e) => {
+            e.stopPropagation();
+            onSelect(d.deviceId);
+            loadAudioDevices(); // Refresh highlight
+          };
+          container.appendChild(item);
+        });
+      };
+
+      // Restore selections from localStorage
+      const savedIn = localStorage.getItem("vivid_audio_input");
+      if (savedIn) {
+        selectedAudioInputId = savedIn;
+        if (audioInputSelect) audioInputSelect.value = savedIn;
+      }
+
+      const savedOut = localStorage.getItem("vivid_audio_output");
+      if (savedOut) {
+        selectedAudioOutputId = savedOut;
+        if (audioOutputSelect) audioOutputSelect.value = savedOut;
+      }
+
+      populateMenu(
+        micListContainer,
+        inputs,
+        "Mic",
+        selectedAudioInputId,
+        (id) => {
+          selectedAudioInputId = id;
+          localStorage.setItem("vivid_audio_input", id);
+          switchMicrophone(id);
+        },
+      );
+
+      populateMenu(
+        speakerListContainer,
+        outputs,
+        "Speaker",
+        selectedAudioOutputId,
+        (id) => {
+          selectedAudioOutputId = id;
+          localStorage.setItem("vivid_audio_output", id);
+          applyAudioOutputDevice(id);
+        },
+      );
+    } catch (e) {
+      Logger.error("Failed to load audio devices", e);
+    }
+  }
+
+  // Load devices on startup
+  loadAudioDevices();
+
+  if (audioInputSelect) {
+    audioInputSelect.onchange = () => {
+      selectedAudioInputId = audioInputSelect.value;
+      localStorage.setItem("vivid_audio_input", selectedAudioInputId);
+    };
+  }
+
+  if (audioOutputSelect) {
+    audioOutputSelect.onchange = () => {
+      selectedAudioOutputId = audioOutputSelect.value;
+      localStorage.setItem("vivid_audio_output", selectedAudioOutputId);
+      applyAudioOutputDevice(selectedAudioOutputId);
+    };
+  }
+
+  async function applyAudioOutputDevice(deviceId) {
+    if (!deviceId) return;
+    try {
+      const elements = [mainVideo, remoteVideoOverlay];
+      for (const el of elements) {
+        if (el) {
+          if (typeof el.setSinkId !== "function") {
+            Logger.error("setSinkId is not supported in this browser/version.");
+            continue;
+          }
+          await el.setSinkId(deviceId);
+        }
+      }
+      Logger.info(`Audio output routed to device: ${deviceId}`);
+    } catch (e) {
+      Logger.warn("Failed to set audio output device", e);
+    }
+  }
+
+  // Reload devices if hardware changes (plug/unplug)
+  navigator.mediaDevices.ondevicechange = () => {
+    Logger.info("Audio devices changed, reloading list...");
+    loadAudioDevices();
+  };
 
   // --- API Configuration ---
   let API_BASE_URL = window.location.origin;
@@ -131,7 +354,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const tryConnect = async () => {
       try {
-        const res = await fetch(healthUrl);
+        const res = await fetch(healthUrl, {
+          headers: { "ngrok-skip-browser-warning": "true" },
+        });
         if (res.ok) {
           isConnected = true;
           clearTimeout(showBootTimer);
@@ -153,7 +378,9 @@ document.addEventListener("DOMContentLoaded", () => {
   checkServerHealth();
 
   // Fetch Client Config (Logging, etc.)
-  fetch(`${API_BASE_URL}/api/config`)
+  fetch(`${API_BASE_URL}/api/config`, {
+    headers: { "ngrok-skip-browser-warning": "true" },
+  })
     .then((res) => res.json())
     .then((config) => {
       if (config.is_production) {
@@ -174,6 +401,9 @@ document.addEventListener("DOMContentLoaded", () => {
       roomId = roomIdInput.value.trim();
       const password = roomPasswordInput.value.trim();
       const name = userNameInput.value.trim();
+      
+      if (audioInputSelect) selectedAudioInputId = audioInputSelect.value;
+      if (audioOutputSelect) selectedAudioOutputId = audioOutputSelect.value;
 
       userName = name || "User-" + Math.floor(Math.random() * 1000);
 
@@ -183,7 +413,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       try {
-        const iceResp = await fetch(`${API_BASE_URL}/api/ice-config`);
+        const iceResp = await fetch(`${API_BASE_URL}/api/ice-config`, {
+          headers: { "ngrok-skip-browser-warning": "true" },
+        });
         if (iceResp.ok) {
           const fetchedConfig = await iceResp.json();
           if (fetchedConfig.iceServers) {
@@ -208,7 +440,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const response = await fetch(`${API_BASE_URL}/api/join`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
           body: JSON.stringify({ room_id: roomId, password: password }),
         });
 
@@ -256,6 +491,18 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   document.addEventListener("fullscreenchange", updateFullscreenIcon);
+
+  // Monitor PIP Exit to ensure state is clean
+  if (mainVideo) {
+    mainVideo.addEventListener("leavepictureinpicture", () => {
+      Logger.info("Main Video left PIP");
+    });
+  }
+  if (remoteVideoOverlay) {
+    remoteVideoOverlay.addEventListener("leavepictureinpicture", () => {
+      Logger.info("Overlay Video left PIP");
+    });
+  }
 
   if (localVideoContainer) setupDraggable(localVideoContainer);
   if (remoteOverlayContainer) setupDraggable(remoteOverlayContainer);
@@ -318,11 +565,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function startCall() {
     try {
+      // Build Audio Constraints
+      const audioConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      if (selectedAudioInputId) {
+        audioConstraints.deviceId = { exact: selectedAudioInputId };
+      }
+
       // 1. Try Audio + Video
       try {
         localStream = await navigator.mediaDevices.getUserMedia({
           video: true,
-          audio: true,
+          audio: audioConstraints,
         });
       } catch (avErr) {
         Logger.warn("Could not get Audio+Video, trying Audio only...", avErr);
@@ -330,7 +587,7 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
           localStream = await navigator.mediaDevices.getUserMedia({
             video: false,
-            audio: true,
+            audio: audioConstraints,
           });
           showToast("Camera access denied/failed. Joining with Audio only.");
         } catch (aErr) {
@@ -395,7 +652,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     socket.onopen = () => {
       Logger.success("WebSocket connected");
-      sendSignal({ type: "announce", name: userName });
+      // Small delay to ensure everything is ready
+      setTimeout(() => {
+        sendSignal({ type: "announce", name: userName });
+      }, 500);
     };
 
     socket.onmessage = async (event) => {
@@ -481,12 +741,29 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
 
-    peerConnection.onnegotiationneeded = async () => {
-      try {
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        sendSignal({ type: "offer", sdp: offer });
-      } catch (err) {}
+    peerConnection.onnegotiationneeded = () => {
+      // Debounce negotiation to prevent multiple offers (e.g. when adding screen video + audio)
+      if (peerConnection._negotiationTimer) {
+        clearTimeout(peerConnection._negotiationTimer);
+      }
+
+      peerConnection._negotiationTimer = setTimeout(async () => {
+        Logger.info("Negotiation needed triggered (Debounced)");
+        if (peerConnection.signalingState !== "stable") {
+          Logger.info(
+            `Signaling state is '${peerConnection.signalingState}', skipping auto-offer`,
+          );
+          return;
+          
+        }
+        try {
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          sendSignal({ type: "offer", sdp: offer });
+        } catch (err) {
+          Logger.error("Error during negotiation:", err);
+        }
+      }, 500); // Wait 500ms for all tracks to be added
     };
   }
 
@@ -506,26 +783,51 @@ document.addEventListener("DOMContentLoaded", () => {
       mainVideo.play().catch((e) => {});
     }
 
+    applyAudioOutputDevice(selectedAudioOutputId);
+
     updateRemoteVideoUI();
     updateRemoteAudioUI();
   }
 
   async function handleSignalMessage(msg) {
-    if (!peerConnection && msg.type !== "mic-status" && msg.type !== "chat")
+    if (
+      !peerConnection &&
+      msg.type !== "mic-status" &&
+      msg.type !== "chat" &&
+      msg.type !== "welcome"
+    )
       await createPeerConnection();
 
     switch (msg.type) {
       case "announce":
         showToast(`${msg.name} has joined!`);
         remoteLabel.innerText = msg.name || "Remote";
+        if (remoteOverlayLabel)
+          remoteOverlayLabel.innerText = msg.name || "Remote";
+        // Reply with our name after a short delay
+        setTimeout(() => {
+          sendSignal({ type: "welcome", name: userName });
+        }, 1000);
+        break;
 
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        sendSignal({ type: "offer", sdp: offer });
+      case "welcome":
+        if (msg.name) {
+          remoteLabel.innerText = msg.name;
+          if (remoteOverlayLabel) remoteOverlayLabel.innerText = msg.name;
+        }
         break;
 
       case "offer":
         try {
+          if (peerConnection.signalingState !== "stable") {
+            Logger.warn(
+              "Received Offer while not stable (Glare). State:",
+              peerConnection.signalingState,
+            );
+            // Simple glare handling: if we are the "polite" peer (receiver), we accept.
+            // But here we just try to proceed, letting WebRTC handle rollback if needed.
+            // Ideally, we should ignore if we are the impolite peer, but for now just log.
+          }
           await peerConnection.setRemoteDescription(
             new RTCSessionDescription(msg.sdp),
           );
@@ -534,16 +836,27 @@ document.addEventListener("DOMContentLoaded", () => {
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           sendSignal({ type: "answer", sdp: answer });
-        } catch (err) {}
+        } catch (err) {
+          Logger.error("Error handling Offer:", err);
+        }
         break;
 
       case "answer":
         try {
+          if (peerConnection.signalingState !== "have-local-offer") {
+            Logger.warn(
+              "Received Answer in wrong state:",
+              peerConnection.signalingState,
+            );
+            return;
+          }
           await peerConnection.setRemoteDescription(
             new RTCSessionDescription(msg.sdp),
           );
           processIceQueue();
-        } catch (err) {}
+        } catch (err) {
+          Logger.error("Error handling Answer:", err);
+        }
         break;
 
       case "ice-candidate":
@@ -680,20 +993,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const isEnabled = audioTrack.enabled;
 
         if (isEnabled) {
-          toggleMicBtn.classList.replace("bg-red-600", "bg-gray-700");
-          toggleMicBtn.classList.replace(
-            "hover:bg-red-700",
-            "hover:bg-gray-600",
-          );
+          // Unmuted (Gray/Default)
+          toggleMicBtn.classList.remove("bg-red-600", "hover:bg-red-700");
+          toggleMicBtn.classList.add("hover:bg-gray-600");
+          
           iconMicOn.classList.remove("hidden");
           iconMicOff.classList.add("hidden");
           localMuteIndicator.classList.add("hidden");
         } else {
-          toggleMicBtn.classList.replace("bg-gray-700", "bg-red-600");
-          toggleMicBtn.classList.replace(
-            "hover:bg-gray-600",
-            "hover:bg-red-700",
-          );
+          // Muted (Red)
+          toggleMicBtn.classList.remove("hover:bg-gray-600");
+          toggleMicBtn.classList.add("bg-red-600", "hover:bg-red-700");
+          
           iconMicOn.classList.add("hidden");
           iconMicOff.classList.remove("hidden");
           localMuteIndicator.classList.remove("hidden");
@@ -745,12 +1056,120 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Electron Integration ---
   if (window.electronAPI) {
     document.getElementById("title-bar").classList.remove("hidden");
-    document.getElementById("min-btn").onclick = () =>
-      window.electronAPI.minimizeWindow();
+
+    // Custom Minimize with PIP support
+    document.getElementById("min-btn").onclick = () => {
+      // With Window PiP, we just trigger PiP mode.
+      enterPiP(); 
+    };
+
     document.getElementById("max-btn").onclick = () =>
       window.electronAPI.maximizeWindow();
     document.getElementById("close-btn").onclick = () =>
       window.electronAPI.closeWindow();
+
+    // Auto PIP on app switch (Alt+Tab or click away)
+    window.electronAPI.onAppBlur(() => {
+      enterPiP();
+    });
+
+    // Handle PiP Mode UI Changes
+    window.electronAPI.onPipModeChanged((isPip) => {
+      if (isPip) {
+        document.body.classList.add("pip-mode");
+        
+        // Add Drag Handle
+        if (!document.getElementById("pip-drag-handle")) {
+            const handle = document.createElement("div");
+            handle.id = "pip-drag-handle";
+            handle.innerHTML = `<svg class="w-4 h-4 text-white opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>`;
+            document.body.appendChild(handle);
+        }
+
+        // --- Video Visibility Logic for PiP ---
+        // If we are sharing screen, the remote video is in the overlay.
+        // We need to make sure THAT video is visible and full screen.
+        if (isScreenSharing && remoteStream) {
+            document.body.classList.add("pip-showing-overlay");
+            // Ensure overlay is visible (override hidden class)
+            remoteOverlayContainer.classList.remove("hidden");
+        } else {
+            document.body.classList.remove("pip-showing-overlay");
+        }
+
+        Logger.info("Entered Window PiP Mode");
+      } else {
+        document.body.classList.remove("pip-mode");
+        document.body.classList.remove("pip-showing-overlay");
+        
+        const handle = document.getElementById("pip-drag-handle");
+        if (handle) handle.remove();
+        Logger.info("Exited Window PiP Mode");
+      }
+    });
+
+    // Restore on Double Click (instead of single click focus)
+    document.addEventListener("dblclick", () => {
+        if (document.body.classList.contains("pip-mode")) {
+            window.electronAPI.togglePip(false);
+        }
+    });
+    
+    /* Removed aggressive auto-restore on focus */
+    /* window.electronAPI.onAppFocus(() => { ... }); */
+  }
+
+  function enterPiP() {
+    Logger.info("Attempting to enter PIP...");
+
+    if (!remoteStream) {
+      Logger.info("No remote stream active, skipping PIP.");
+      return;
+    }
+
+    // Electron Window PiP Strategy
+    if (window.electronAPI) {
+        window.electronAPI.togglePip(true);
+        return;
+    }
+
+    // Standard Browser PiP Strategy
+    if (!document.pictureInPictureEnabled) {
+      Logger.warn("PIP not enabled/supported.");
+      return;
+    }
+
+    if (document.pictureInPictureElement) {
+      Logger.info("PIP already active.");
+      return;
+    }
+
+    const targetVideo =
+      mainVideo.srcObject && mainVideo.srcObject.id === remoteStream.id
+        ? mainVideo
+        : remoteVideoOverlay.srcObject &&
+            remoteVideoOverlay.srcObject.id === remoteStream.id
+          ? remoteVideoOverlay
+          : null;
+
+    if (!targetVideo) {
+      Logger.info("Remote stream not attached to any video element.");
+      return;
+    }
+
+    if (targetVideo.readyState < 1) {
+      Logger.warn("Target video not ready for PIP.");
+      return;
+    }
+
+    targetVideo.requestPictureInPicture().catch((e) => {
+      if (e.name === "NotAllowedError") {
+        Logger.warn("PIP blocked by browser (user gesture required).");
+        showToast("Auto-PIP blocked. Click the Minimize button.");
+      } else {
+        Logger.error(`Failed to enter PIP on ${targetVideo.id}:`, e);
+      }
+    });
   }
 
   // Source Selection Elements
@@ -759,10 +1178,84 @@ document.addEventListener("DOMContentLoaded", () => {
   const sourcesList = document.getElementById("sources-list");
   const shareAudioCheck = document.getElementById("share-audio-check");
   const fpsSelect = document.getElementById("fps-select");
+  const audioHelpBtn = document.getElementById("audio-help-btn");
 
   if (closeSourcesBtn) {
     closeSourcesBtn.onclick = () => sourcesModal.classList.add("hidden");
   }
+  
+  if (audioHelpBtn && window.electronAPI) {
+      audioHelpBtn.onclick = () => window.electronAPI.openAudioGuide();
+  }
+
+  // --- Screen Sharing Helper Functions for Audio Loopback Prevention ---
+  let audioOutputBeforeScreenShare = null;
+  let isAudioReroutedForScreenShare = false;
+
+  // Create a silent/dummy audio output to prevent echo
+  async function rerouteAudioForScreenShare() {
+    if (isAudioReroutedForScreenShare) return;
+    
+    try {
+      // Save current output device
+      audioOutputBeforeScreenShare = selectedAudioOutputId;
+      
+      // Get available audio devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outputs = devices.filter((d) => d.kind === "audiooutput");
+      
+      // Check if we have multiple output devices
+      if (outputs.length > 1) {
+        // Inform user about the limitation
+        showToast(
+          "⚠️ Screen audio enabled: Remote audio will use your default output to prevent echo. " +
+          "For best experience, use headphones or enable 'Stereo Mix' loopback."
+        );
+      } else {
+        // Only one output available - user MUST use headphones
+        showToast(
+          "⚠️ Please use HEADPHONES when sharing screen with audio, " +
+          "otherwise the remote user will hear themselves echo."
+        );
+      }
+      
+      isAudioReroutedForScreenShare = true;
+      Logger.info("Audio routing prepared for screen share");
+      
+    } catch (e) {
+      Logger.error("Failed to prepare audio routing", e);
+      showToast(
+        "⚠️ IMPORTANT: Use headphones to prevent the remote user from hearing echo!"
+      );
+    }
+  }
+
+  // Restore original audio routing
+  async function restoreAudioRouting() {
+    if (!isAudioReroutedForScreenShare) return;
+    
+    try {
+      if (audioOutputBeforeScreenShare) {
+        await applyAudioOutputDevice(audioOutputBeforeScreenShare);
+        selectedAudioOutputId = audioOutputBeforeScreenShare;
+      }
+      
+      isAudioReroutedForScreenShare = false;
+      audioOutputBeforeScreenShare = null;
+      Logger.info("Audio routing restored");
+      
+    } catch (e) {
+      Logger.error("Failed to restore audio routing", e);
+    }
+  }
+
+  // --- Naudiodon Audio Capture State ---
+  let systemAudioContext;
+  let systemAudioDestination;
+  let nextAudioStartTime = 0;
+  let isCapturingSystemAudio = false;
+
+  const systemAudioSelect = document.getElementById("system-audio-device-select");
 
   async function startScreenShare() {
     // 1. Electron: Use Custom Source Selector
@@ -770,6 +1263,23 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const sources = await window.electronAPI.getScreenSources();
         populateSourcesList(sources);
+        
+        // Populate Audio Devices (Standard Web API)
+        if (systemAudioSelect) {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                systemAudioSelect.innerHTML = '<option value="">Audio Device: Auto</option>';
+                devices.filter(d => d.kind === 'audioinput').forEach(d => {
+                     const opt = document.createElement("option");
+                     opt.value = d.deviceId;
+                     opt.text = d.label || `Audio Input ${d.deviceId.slice(0, 5)}`;
+                     systemAudioSelect.appendChild(opt);
+                });
+            } catch (e) {
+                Logger.error("Failed to list audio devices", e);
+            }
+        }
+        
         sourcesModal.classList.remove("hidden");
       } catch (err) {
         Logger.error("Failed to get sources from Electron:", err);
@@ -779,7 +1289,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // 2. Web Browser: Standard getDisplayMedia
-    // Detect Firefox/Gecko
     const isFirefox = navigator.userAgent.toLowerCase().indexOf("firefox") > -1;
 
     if (isFirefox) {
@@ -794,11 +1303,36 @@ document.addEventListener("DOMContentLoaded", () => {
       currentScreenStream = await navigator.mediaDevices.getDisplayMedia({
         video: { cursor: "always" },
         audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
         },
       });
+
+      // Check if audio was included
+      const hasAudio = currentScreenStream.getAudioTracks().length > 0;
+      if (hasAudio) {
+        await rerouteAudioForScreenShare();
+        
+        // Show persistent reminder
+        const reminder = document.createElement('div');
+        reminder.id = 'headphone-reminder';
+        reminder.className = 'fixed top-20 left-1/2 transform -translate-x-1/2 bg-yellow-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3';
+        reminder.innerHTML = `
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+          </svg>
+          <span><strong>Using headphones?</strong> Great! Otherwise remote user will hear echo.</span>
+          <button onclick="this.parentElement.remove()" class="ml-2 text-white hover:text-gray-200">✕</button>
+        `;
+        document.body.appendChild(reminder);
+        
+        // Auto-remove after 10 seconds
+        setTimeout(() => {
+          const el = document.getElementById('headphone-reminder');
+          if (el) el.remove();
+        }, 10000);
+      }
 
       handleScreenStreamAcquired();
     } catch (err) {
@@ -831,13 +1365,21 @@ document.addEventListener("DOMContentLoaded", () => {
     sourcesModal.classList.add("hidden");
     const shareAudio = shareAudioCheck.checked;
     const fps = parseInt(fpsSelect.value);
+    const customAudioDeviceId = systemAudioSelect ? systemAudioSelect.value : "";
 
     try {
+      // If sharing audio via standard method, prepare audio routing
+      if (shareAudio && !customAudioDeviceId) {
+        await rerouteAudioForScreenShare();
+      }
+
+      // Acquisition with Legacy Chrome Constraints
       const constraints = {
-        audio: shareAudio
+        audio: (shareAudio && !customAudioDeviceId)
           ? {
               mandatory: {
                 chromeMediaSource: "desktop",
+                chromeMediaSourceId: sourceId,
               },
             }
           : false,
@@ -851,12 +1393,57 @@ document.addEventListener("DOMContentLoaded", () => {
         },
       };
 
-      currentScreenStream =
-        await navigator.mediaDevices.getUserMedia(constraints);
+      currentScreenStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // --- CUSTOM AUDIO HANDLING (Standard Web API) ---
+      if (customAudioDeviceId) {
+          Logger.info("Using custom audio device for share:", customAudioDeviceId);
+          
+          try {
+              const audioStream = await navigator.mediaDevices.getUserMedia({
+                  audio: {
+                      deviceId: { exact: customAudioDeviceId },
+                      echoCancellation: false, // Usually false for music/game audio
+                      autoGainControl: false,
+                      noiseSuppression: false
+                  }
+              });
+              
+              const audioTrack = audioStream.getAudioTracks()[0];
+              if (audioTrack) {
+                  currentScreenStream.addTrack(audioTrack);
+                  Logger.info("Added custom audio track to screen stream");
+              }
+          } catch (audioErr) {
+              Logger.error("Failed to acquire custom audio device", audioErr);
+              showToast("Failed to capture selected audio device.");
+          }
+      } else {
+          // Standard Audio Constraints
+          const audioTrack = currentScreenStream.getAudioTracks()[0];
+          if (audioTrack) {
+            try {
+              await audioTrack.applyConstraints({
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                channelCount: 1,
+              });
+            } catch (e) {
+              Logger.warn("Could not apply audio constraints", e);
+            }
+          }
+      }
+
       handleScreenStreamAcquired();
+      
     } catch (err) {
       Logger.error("Error selecting source:", err);
       showToast("Failed to share selected screen.");
+      
+      if (shareAudio) {
+        await restoreAudioRouting();
+      }
     }
   }
 
@@ -915,6 +1502,9 @@ document.addEventListener("DOMContentLoaded", () => {
       currentScreenStream = null;
     }
 
+    // Restore audio routing
+    await restoreAudioRouting();
+
     updateUIForScreenShare(false);
 
     if (document.pictureInPictureElement)
@@ -936,7 +1526,10 @@ document.addEventListener("DOMContentLoaded", () => {
         remoteVideoOverlay.srcObject = remoteStream;
         remoteVideoOverlay.muted = false;
 
+        // Auto-PiP for Overlay (Browser Native Only)
+        // If Electron is active, we DO NOT trigger this because we use Window PiP
         if (
+          !window.electronAPI && 
           document.pictureInPictureEnabled &&
           remoteVideoOverlay.requestPictureInPicture
         ) {
@@ -1153,4 +1746,113 @@ document.addEventListener("DOMContentLoaded", () => {
       remoteOverlayMuteIndicator.classList.add("hidden");
     }
   }
+
+  // Inject PiP Styles
+  const pipStyle = document.createElement('style');
+  pipStyle.textContent = `
+    body.pip-mode #title-bar,
+    body.pip-mode header,
+    body.pip-mode #controls-bar,
+    body.pip-mode #chat-sidebar,
+    body.pip-mode #local-video-container,
+    body.pip-mode #remote-overlay-container,
+    body.pip-mode #join-screen,
+    body.pip-mode #boot-screen,
+    body.pip-mode #screen-share-placeholder,
+    body.pip-mode .source-item,
+    body.pip-mode #sources-modal {
+        display: none !important;
+    }
+    
+    body.pip-mode {
+        background: black !important;
+    }
+
+    body.pip-mode #video-screen {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 9999 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    
+    body.pip-mode #video-container {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    
+    body.pip-mode #main-video {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain !important; /* Keep aspect ratio */
+    }
+
+    /* PiP Drag Handle */
+    #pip-drag-handle {
+        position: fixed;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100px;
+        height: 24px;
+        background: rgba(0, 0, 0, 0.6);
+        border-bottom-left-radius: 8px;
+        border-bottom-right-radius: 8px;
+        z-index: 10000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        cursor: move;
+        -webkit-app-region: drag; /* This makes it draggable */
+    }
+    
+    /* Ensure nothing else steals the drag, allowing edge resizing */
+    body.pip-mode * {
+        -webkit-app-region: no-drag;
+    }
+    
+    /* Re-enable drag for the handle */
+    body.pip-mode #pip-drag-handle, 
+    body.pip-mode #pip-drag-handle svg {
+        -webkit-app-region: drag;
+    }
+
+    /* --- SPECIAL HANDLING FOR OVERLAY VIDEO IN PiP --- */
+    /* When 'pip-showing-overlay' is active, we hide the main placeholder and maximize the overlay */
+    
+    body.pip-mode.pip-showing-overlay #screen-share-placeholder {
+        display: none !important;
+    }
+
+    body.pip-mode.pip-showing-overlay #remote-overlay-container {
+        display: block !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 9998 !important; /* Below drag handle */
+        border: none !important;
+        border-radius: 0 !important;
+        background: black !important;
+    }
+
+    body.pip-mode.pip-showing-overlay #remote-video-overlay {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain !important;
+    }
+    
+    /* Hide the mini-headers/controls on the overlay in PiP */
+    body.pip-mode.pip-showing-overlay #remote-overlay-container .pip-header,
+    body.pip-mode.pip-showing-overlay #remote-overlay-container .minimize-btn,
+    body.pip-mode.pip-showing-overlay #remote-overlay-container #remote-overlay-label {
+        display: none !important;
+    }
+  `;
+  document.head.appendChild(pipStyle);
+
 });
