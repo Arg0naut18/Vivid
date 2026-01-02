@@ -23,8 +23,7 @@ const store = new Store({
 
 let mainWindow;
 
-const REMOTE_SERVER_URL =
-  "https://unchauvinistic-supergloriously-adalberto.ngrok-free.dev/";
+const REMOTE_SERVER_URL = "https://vivid-wvh4.onrender.com/";
 
 // --- PiP State ---
 let isPipMode = false;
