@@ -328,15 +328,20 @@ document.addEventListener("DOMContentLoaded", () => {
       const password = roomPasswordInput.value.trim();
       const name = userNameInput.value.trim();
       
-      if (audioInputSelect) selectedAudioInputId = audioInputSelect.value;
-      if (audioOutputSelect) selectedAudioOutputId = audioOutputSelect.value;
-
-      userName = name || "User-" + Math.floor(Math.random() * 1000);
-
       if (!roomId || !password) {
         alert("Please enter both Room ID and Password");
         return;
       }
+
+      // Disable button to prevent multiple clicks
+      joinBtn.disabled = true;
+      joinBtn.innerText = "Joining...";
+      joinBtn.classList.add("opacity-50", "cursor-not-allowed");
+
+      if (audioInputSelect) selectedAudioInputId = audioInputSelect.value;
+      if (audioOutputSelect) selectedAudioOutputId = audioOutputSelect.value;
+
+      userName = name || "User-" + Math.floor(Math.random() * 1000);
 
       try {
         const iceResp = await fetch(`${API_BASE_URL}/api/ice-config`, {
@@ -372,6 +377,11 @@ document.addEventListener("DOMContentLoaded", () => {
           const err = await response.json();
           alert(err.detail || "Login failed");
           Logger.error("Login failed:", err.detail);
+          
+          // Re-enable button on failure
+          joinBtn.disabled = false;
+          joinBtn.innerText = "Join";
+          joinBtn.classList.remove("opacity-50", "cursor-not-allowed");
           return;
         }
 
@@ -389,6 +399,11 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err) {
         alert("Could not connect to server");
         Logger.error("Could not connect to server", err);
+        
+        // Re-enable button on network error
+        joinBtn.disabled = false;
+        joinBtn.innerText = "Join";
+        joinBtn.classList.remove("opacity-50", "cursor-not-allowed");
       }
     };
   }
@@ -544,6 +559,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     socket.onopen = () => {
       Logger.success("WebSocket connected");
+      reconnectAttempts = 0; // Reset counter on success
       setTimeout(() => {
         sendSignal({ type: "announce", name: userName });
       }, 500);
@@ -560,10 +576,22 @@ document.addEventListener("DOMContentLoaded", () => {
         alert("Connection closed: " + event.reason);
         window.location.reload();
       } else {
-        setTimeout(connectSocket, 3000);
+        // Reconnection Logic
+        if (reconnectAttempts < 5) {
+          reconnectAttempts++;
+          const delay = 10000; // 10 seconds
+          showToast(`Connection lost. Retrying in 10s... (Attempt ${reconnectAttempts}/5)`);
+          Logger.warn(`Socket closed. Retrying in ${delay}ms... Attempt ${reconnectAttempts}/5`);
+          setTimeout(connectSocket, delay);
+        } else {
+          alert("Lost connection to the server. Please log in again.");
+          window.location.reload();
+        }
       }
     };
   }
+  
+  let reconnectAttempts = 0;
 
   async function createPeerConnection() {
     peerConnection = new RTCPeerConnection(rtcConfig);
@@ -1051,6 +1079,26 @@ document.addEventListener("DOMContentLoaded", () => {
         Logger.error("Failed to get sources", err);
       }
       return;
+    }
+
+    // Web Fallback
+    try {
+        // Prepare constraints for standard browser screen sharing
+        // Note: System audio sharing is browser-dependent (tick box in Chrome dialog)
+        const constraints = {
+            video: { cursor: "always" },
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
+            }
+        };
+        
+        currentScreenStream = await navigator.mediaDevices.getDisplayMedia(constraints);
+        handleScreenStreamAcquired();
+    } catch (err) {
+        Logger.error("Error sharing screen (Web):", err);
+        showToast("Failed to share screen");
     }
   }
 

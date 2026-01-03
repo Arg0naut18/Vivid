@@ -22,6 +22,9 @@
     
     DetailPrint "VB-Audio Cable installation attempted."
     
+    ; Flag that a reboot is required
+    SetRebootFlag true
+    
     ; Clean up
     SetOutPath "$TEMP"
     RMDir /r "$TEMP\vivid_vb_driver"

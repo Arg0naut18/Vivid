@@ -170,3 +170,6 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for room {room_id}")
         await room_manager.broadcast('{"type": "user-left"}', room_id, websocket)
+    except Exception as e:
+        logger.error(f"Unexpected WebSocket error in room {room_id}: {e}")
+        await room_manager.broadcast('{"type": "user-left"}', room_id, websocket)

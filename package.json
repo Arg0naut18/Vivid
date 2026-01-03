@@ -1,6 +1,6 @@
 {
   "name": "vivid-desktop",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Vivid P2P Video Calling - Desktop App",
   "main": "electron/main.js",
   "scripts": {
@@ -32,7 +32,8 @@
     "nsis": {
       "include": "installer.nsh",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": true
     }
   }
 }
